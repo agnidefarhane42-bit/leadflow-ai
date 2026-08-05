@@ -1,12 +1,6 @@
-import { neon } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-http";
-import { pgTable, serial, text, timestamp, integer, boolean, varchar } from "drizzle-orm/pg-core";
-
-// --- Connection Neon ---
-const connectionString = process.env.DATABASE_URL!;
-
-const sql = neon(connectionString);
-export const db = drizzle(sql);
+import { neon, NeonQueryFunction } from "@neondatabase/serverless";
+import { drizzle, NeonHttpDatabase } from "drizzle-orm/neon-http";
+import { pgTable, serial, text, timestamp, integer, varchar } from "drizzle-orm/pg-core";
 
 // --- Schema ---
 
@@ -61,6 +55,28 @@ export const qualifications = pgTable("qualifications", {
   answer: text("answer").notNull(),
   scoreWeight: integer("score_weight").default(0),
   createdAt: timestamp("created_at").defaultNow(),
+});
+
+// --- Lazy DB connection (avoids build-time errors) ---
+let _db: NeonHttpDatabase<Record<string, never>> | null = null;
+
+export function getDb() {
+  if (!_db) {
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString) {
+      throw new Error("DATABASE_URL is not set");
+    }
+    const sql = neon(connectionString);
+    _db = drizzle(sql);
+  }
+  return _db;
+}
+
+export const db = new Proxy({} as NeonHttpDatabase<Record<string, never>>, {
+  get(_target, prop) {
+    const realDb = getDb();
+    return Reflect.get(realDb, prop);
+  },
 });
 
 // Export types
