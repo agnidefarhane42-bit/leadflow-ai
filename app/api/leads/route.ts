@@ -3,10 +3,10 @@ import { db, leads, qualifications, users } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { Resend } from "resend";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 // Scoring rules
-const SCORING_RULES = {
+const SCORING_RULES: Record<string, Record<string, number>> = {
   budget: {
     "< 500€": 10,
     "500€ - 2000€": 25,
@@ -30,7 +30,7 @@ const SCORING_RULES = {
     "Je valide avec un associé": 15,
     "Je recommande": 5,
   },
-} as const;
+};
 
 const MAX_SCORE = 170;
 
@@ -56,13 +56,14 @@ export async function POST(req: NextRequest) {
 
     if (answers) {
       for (const [key, value] of Object.entries(answers)) {
-        const rules = SCORING_RULES[key as keyof typeof SCORING_RULES];
-        if (rules && value in rules) {
-          const weight = rules[value as keyof typeof rules];
+        const rules = SCORING_RULES[key];
+        const valStr = String(value);
+        if (rules && valStr in rules) {
+          const weight = rules[valStr];
           totalScore += weight;
           qualificationData.push({
             question: key,
-            answer: value as string,
+            answer: valStr,
             scoreWeight: weight,
           });
         }
@@ -102,11 +103,11 @@ export async function POST(req: NextRequest) {
     }
 
     // Send notification email for hot/warm leads
-    if ((status === "hot" || status === "warm") && process.env.RESEND_API_KEY) {
+    if ((status === "hot" || status === "warm") && resend) {
       try {
         await resend.emails.send({
           from: "LeadFlow AI <notifications@leadflow.ai>",
-          to: ["contact@leadflow.ai"], // TODO: replace with owner email
+          to: ["contact@leadflow.ai"],
           subject: status === "hot" ? "🔥 Nouveau lead HOT !" : "⚡ Nouveau lead warm",
           html: `
             <div style="font-family: Inter, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -126,7 +127,7 @@ export async function POST(req: NextRequest) {
               <p style="margin-top: 20px; padding: 16px; background: #f8fafc; border-radius: 8px;">
                 ${status === "hot" ? "Ce lead est qualifié. Contactez-le rapidement pour planifier un RDV !" : "Ce lead est intéressant. Un suivi sous 48h est recommandé."}
               </p>
-              <a href="${process.env.NEXT_PUBLIC_APP_URL}/dashboard" style="display: inline-block; margin-top: 20px; padding: 12px 24px; background: #4f46e5; color: white; text-decoration: none; border-radius: 8px; font-weight: 600;">
+              <a href="${process.env.NEXT_PUBLIC_APP_URL || ""}/dashboard" style="display: inline-block; margin-top: 20px; padding: 12px 24px; background: #4f46e5; color: white; text-decoration: none; border-radius: 8px; font-weight: 600;">
                 Voir sur le dashboard
               </a>
             </div>
@@ -134,7 +135,6 @@ export async function POST(req: NextRequest) {
         });
       } catch (emailError) {
         console.error("Email notification failed:", emailError);
-        // Don't fail the request if email fails
       }
     }
 
@@ -163,14 +163,14 @@ export async function GET(req: NextRequest) {
     const status = searchParams.get("status");
     const limit = parseInt(searchParams.get("limit") || "50");
 
-    let query = db.select().from(leads).limit(limit);
-
+    let result;
     if (status) {
-      query = db.select().from(leads).where(eq(leads.status, status)).limit(limit);
+      result = await db.select().from(leads).where(eq(leads.status, status)).limit(limit);
+    } else {
+      result = await db.select().from(leads).limit(limit);
     }
 
-    const allLeads = await query;
-    return NextResponse.json({ leads: allLeads });
+    return NextResponse.json({ leads: result });
   } catch (error) {
     console.error("Failed to fetch leads:", error);
     return NextResponse.json({ error: "Failed to fetch leads" }, { status: 500 });

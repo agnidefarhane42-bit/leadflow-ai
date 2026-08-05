@@ -1,12 +1,12 @@
-import { sql } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-serverless";
+import { neon } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/neon-http";
 import { pgTable, serial, text, timestamp, integer, boolean, varchar } from "drizzle-orm/pg-core";
 
 // --- Connection Neon ---
 const connectionString = process.env.DATABASE_URL!;
 
-const client = sql(connectionString);
-export const db = drizzle(client);
+const sql = neon(connectionString);
+export const db = drizzle(sql);
 
 // --- Schema ---
 
@@ -17,7 +17,7 @@ export const users = pgTable("users", {
   fullName: varchar("full_name", { length: 255 }),
   company: varchar("company", { length: 255 }),
   role: varchar("role", { length: 50 }).default("user"),
-  plan: varchar("plan", { length: 20 }).default("free"), // free | pro
+  plan: varchar("plan", { length: 20 }).default("free"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -30,9 +30,9 @@ export const leads = pgTable("leads", {
   email: varchar("email", { length: 255 }).notNull(),
   company: varchar("company", { length: 255 }),
   phone: varchar("phone", { length: 50 }),
-  source: varchar("source", { length: 100 }).default("landing"), // linkedin | twitter | landing
-  score: integer("score").default(0), // 0-100
-  status: varchar("status", { length: 20 }).default("new"), // new | qualified | hot | warm | cold | converted
+  source: varchar("source", { length: 100 }).default("landing"),
+  score: integer("score").default(0),
+  status: varchar("status", { length: 20 }).default("new"),
   budget: varchar("budget", { length: 100 }),
   need: text("need"),
   timeline: varchar("timeline", { length: 100 }),
@@ -45,8 +45,8 @@ export const appointments = pgTable("appointments", {
   id: serial("id").primaryKey(),
   leadId: integer("lead_id").references(() => leads.id),
   scheduledAt: timestamp("scheduled_at").notNull(),
-  duration: integer("duration").default(30), // minutes
-  status: varchar("status", { length: 20 }).default("pending"), // pending | confirmed | cancelled | completed
+  duration: integer("duration").default(30),
+  status: varchar("status", { length: 20 }).default("pending"),
   meetingLink: text("meeting_link"),
   notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow(),
