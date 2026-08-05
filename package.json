@@ -19,7 +19,9 @@
     "lucide-react": "^0.439.0",
     "clsx": "^2.1.1",
     "tailwind-merge": "^2.5.2",
-    "framer-motion": "^11.3.0"
+    "framer-motion": "^11.3.0",
+    "googleapis": "^144.0.0",
+    "resend": "^4.0.0"
   },
   "devDependencies": {
     "typescript": "^5.5.4",
