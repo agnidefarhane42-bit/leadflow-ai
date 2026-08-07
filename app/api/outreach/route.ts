@@ -5,6 +5,41 @@ import { eq, and } from "drizzle-orm";
 import { consumeCredits, getBalance } from "@/lib/credits";
 import { callMistral, parseAIResponse } from "@/lib/mistral";
 
+// GET: List outreach messages (optionally filtered by campaign)
+export async function GET(req: NextRequest) {
+  try {
+    const user = await getCurrentUser();
+    if (!user) {
+      return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
+    }
+
+    const { searchParams } = new URL(req.url);
+    const campaignId = searchParams.get("campaignId");
+
+    let allMessages = await db
+      .select()
+      .from(outreachMessages)
+      .where(eq(outreachMessages.userId, user.id));
+
+    // Filter by campaign if provided
+    let messages = allMessages;
+    if (campaignId) {
+      // Get prospects for this campaign
+      const campaignProspects = await db
+        .select()
+        .from(prospects)
+        .where(and(eq(prospects.campaignId, parseInt(campaignId)), eq(prospects.userId, user.id)));
+      const prospectIds = new Set(campaignProspects.map((p) => p.id));
+      messages = allMessages.filter((m) => prospectIds.has(m.prospectId));
+    }
+
+    return NextResponse.json({ messages });
+  } catch (error) {
+    console.error("Get outreach messages error:", error);
+    return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
+  }
+}
+
 // POST: Generate an outreach message for a prospect using an agent
 export async function POST(req: NextRequest) {
   try {
