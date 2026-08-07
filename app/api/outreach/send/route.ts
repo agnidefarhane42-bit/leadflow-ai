@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { db, outreachMessages, prospects, users } from "@/lib/db";
 import { eq, and } from "drizzle-orm";
-import { sendEmail } from "@/lib/resend";
+import { sendGmail } from "@/lib/gmail";
 
-// POST: Send an outreach message via email (Resend)
+// POST: Send an outreach message via Gmail API (using user's own Gmail account)
 export async function POST(req: NextRequest) {
   try {
     const user = await getCurrentUser();
@@ -47,16 +47,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Ce prospect n'a pas d'adresse email" }, { status: 400 });
     }
 
-    // Get user's email for reply-to
+    // Get user's Google refresh token and email
     const userRows = await db.select().from(users).where(eq(users.id, user.id)).limit(1);
-    const userEmail = userRows[0]?.email || "";
+    const userRow = userRows[0];
+    const refreshToken = userRow?.googleRefreshToken;
+    const userEmail = userRow?.email || "";
 
-    // Send the email via Resend
-    const result = await sendEmail({
+    if (!refreshToken) {
+      return NextResponse.json({
+        error: "Gmail non connecté. Allez dans Paramètres > Connecter Google pour autoriser l'envoi d'emails depuis votre compte Gmail.",
+      }, { status: 400 });
+    }
+
+    // Send the email via Gmail
+    const result = await sendGmail({
       to: prospect.email,
       subject: message.subject || "Contact professionnel",
       textContent: message.content,
       replyTo: userEmail,
+      refreshToken,
       htmlContent: `<div style="font-family: -apple-system, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
         <div style="white-space: pre-wrap; line-height: 1.6; color: #334155; font-size: 15px;">${message.content.replace(/\n/g, "<br>")}</div>
         <br>
@@ -74,7 +83,7 @@ export async function POST(req: NextRequest) {
         .where(eq(outreachMessages.id, messageId));
 
       return NextResponse.json(
-        { error: `Échec d'envoi: ${result.error}` },
+        { error: `Échec d'envoi Gmail: ${result.error}` },
         { status: 500 }
       );
     }

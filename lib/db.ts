@@ -15,6 +15,7 @@ export const users = pgTable("users", {
   company: varchar("company", { length: 255 }),
   role: varchar("role", { length: 50 }).default("user"),
   plan: varchar("plan", { length: 20 }).default("free"),
+  googleRefreshToken: text("google_refresh_token"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { google } from "googleapis";
 
-// Initiate Google Calendar OAuth flow
+// Initiate Google OAuth flow (Calendar + Gmail send)
 export async function GET() {
   if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
     return NextResponse.json({
-      error: "Google Calendar credentials not configured",
+      error: "Google credentials not configured",
       message: "Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to your environment variables.",
     }, { status: 503 });
   }
@@ -19,6 +19,7 @@ export async function GET() {
   const scopes = [
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/gmail.send",
   ];
 
   const authUrl = oauth2Client.generateAuthUrl({

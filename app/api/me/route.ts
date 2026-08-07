@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getBalance } from "@/lib/credits";
+import { db, users } from "@/lib/db";
+import { eq } from "drizzle-orm";
 
 export async function GET() {
   try {
@@ -11,6 +13,10 @@ export async function GET() {
 
     const balance = await getBalance(user.id);
 
+    // Check if Gmail is connected
+    const userRows = await db.select().from(users).where(eq(users.id, user.id)).limit(1);
+    const googleConnected = !!userRows[0]?.googleRefreshToken;
+
     return NextResponse.json({
       user: {
         email: user.email,
@@ -20,6 +26,7 @@ export async function GET() {
         plan: user.plan,
       },
       balance,
+      googleConnected,
     });
   } catch {
     return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });

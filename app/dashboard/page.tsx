@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
-import { Users, Target, Mail, TrendingUp, Coins, Bot, ArrowRight, Sparkles } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { Users, Target, Mail, TrendingUp, Coins, Bot, ArrowRight, Sparkles, MailCheck, AlertCircle, CheckCircle2 } from "lucide-react";
 
 interface DashboardData {
   balance: number;
@@ -14,14 +15,39 @@ interface DashboardData {
   activeCampaigns: number;
 }
 
-export default function DashboardPage() {
+function DashboardContent() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [recentLeads, setRecentLeads] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [googleConnected, setGoogleConnected] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const searchParams = useSearchParams();
+
+  const googleError = searchParams.get("google_error");
+  const googleSuccess = searchParams.get("google_connected");
 
   useEffect(() => {
-    Promise.all([fetchStats(), fetchLeads()]);
+    Promise.all([fetchStats(), fetchLeads(), fetchGoogleStatus()]);
   }, []);
+
+  const fetchGoogleStatus = async () => {
+    try {
+      const res = await fetch("/api/me");
+      const data = await res.json();
+      setGoogleConnected(data.googleConnected || false);
+    } catch {}
+  };
+
+  const connectGoogle = async () => {
+    try {
+      setConnecting(true);
+      const res = await fetch("/api/calendar/auth");
+      const data = await res.json();
+      if (data.authUrl) {
+        window.location.href = data.authUrl;
+      }
+    } catch {}
+  };
 
   const fetchStats = async () => {
     try {
@@ -48,7 +74,6 @@ export default function DashboardPage() {
         activeCampaigns: campaigns.filter((c: any) => c.status === "active").length,
       });
     } catch {
-      // Set empty data instead of leaving null — prevents infinite loading
       setData({
         balance: 0,
         totalProspects: 0,
@@ -67,7 +92,6 @@ export default function DashboardPage() {
       const data = await res.json();
       setRecentLeads(data.leads || data || []);
     } catch {
-      // silent — empty leads is fine
     } finally {
       setLoading(false);
     }
@@ -81,7 +105,6 @@ export default function DashboardPage() {
     );
   }
 
-  // Use data or empty defaults (handles edge case where data fetch failed)
   const d = data ?? {
     balance: 0,
     totalProspects: 0,
@@ -111,6 +134,39 @@ export default function DashboardPage() {
             </Link>
           </div>
         </div>
+
+        {/* Google connection status */}
+        {googleSuccess && (
+          <div className="mb-6 p-4 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center gap-3">
+            <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+            <p className="text-sm text-emerald-700">Google connecté avec succès ! Vous pouvez maintenant envoyer des emails depuis votre compte Gmail.</p>
+          </div>
+        )}
+        {googleError && (
+          <div className="mb-6 p-4 rounded-xl bg-red-50 border border-red-200 flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-red-600" />
+            <p className="text-sm text-red-700">Erreur de connexion Google : {googleError}</p>
+          </div>
+        )}
+
+        {!googleConnected && (
+          <div className="mb-6 p-4 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <MailCheck className="w-5 h-5 text-amber-600" />
+              <div>
+                <p className="text-sm font-medium text-amber-800">Gmail non connecté</p>
+                <p className="text-xs text-amber-600">Connectez votre compte Google pour envoyer des emails d'outreach (gratuit, 500 emails/jour)</p>
+              </div>
+            </div>
+            <button
+              onClick={connectGoogle}
+              disabled={connecting}
+              className="px-4 py-2 rounded-lg bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition disabled:opacity-50"
+            >
+              {connecting ? "Connexion..." : "Connecter Gmail"}
+            </button>
+          </div>
+        )}
 
         {/* Credits banner */}
         <div className="glass-card rounded-2xl p-6 mb-8 flex items-center justify-between">
@@ -209,5 +265,19 @@ export default function DashboardPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center pt-20">
+          <div className="w-8 h-8 border-4 border-brand-500 border-t-transparent rounded-full animate-spin" />
+        </div>
+      }
+    >
+      <DashboardContent />
+    </Suspense>
   );
 }
