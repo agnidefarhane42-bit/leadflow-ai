@@ -62,6 +62,7 @@ export default function ProspectDetailPage() {
   const [generating, setGenerating] = useState<number | null>(null);
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<string>("");
+  const [sending, setSending] = useState<number | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -127,6 +128,25 @@ export default function ProspectDetailPage() {
       fetchData();
     } catch {
       // silent
+    }
+  };
+
+  const sendOutreachEmail = async (messageId: number) => {
+    setSending(messageId);
+    try {
+      const res = await fetch("/api/outreach/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messageId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        fetchData();
+      }
+    } catch {
+      // silent
+    } finally {
+      setSending(null);
     }
   };
 
@@ -329,19 +349,27 @@ export default function ProspectDetailPage() {
                      msg.status === "sent" ? "Envoyé" :
                      msg.status === "replied" ? "Répondu" : "Rejeté"}
                   </span>
-                  <button
-                    onClick={() => {
-                      if (prospect.email) {
-                        const mailto = `mailto:${prospect.email}?subject=${encodeURIComponent(msg.subject || "")}&body=${encodeURIComponent(msg.content)}`;
-                        window.open(mailto, "_blank");
-                      }
-                    }}
-                    disabled={!prospect.email}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                    {prospect.email ? "Ovrir dans email" : "Pas d'email"}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {msg.status === "draft" && msg.type === "email" && prospect.email && (
+                      <button
+                        onClick={() => sendOutreachEmail(msg.id)}
+                        disabled={sending === msg.id}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-brand-500 to-purple-600 text-white text-sm font-medium hover:shadow-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {sending === msg.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                        Envoyer
+                      </button>
+                    )}
+                    {prospect.email && msg.type === "email" && (
+                      <a
+                        href={`mailto:${prospect.email}?subject=${encodeURIComponent(msg.subject || "")}&body=${encodeURIComponent(msg.content)}`}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 text-sm font-medium hover:bg-slate-200 transition"
+                      >
+                        <Mail className="w-3.5 h-3.5" />
+                        mailto
+                      </a>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}

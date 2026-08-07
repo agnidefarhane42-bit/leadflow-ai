@@ -14,6 +14,7 @@ const PROTECTED_ROUTES = [
   "/prospects",
   "/billing",
   "/settings",
+  "/analytics",
 ];
 
 // Auth routes (redirect to dashboard if already logged in)
@@ -57,6 +58,7 @@ export const config = {
     "/prospects/:path*",
     "/billing/:path*",
     "/settings/:path*",
+    "/analytics/:path*",
     "/login",
     "/signup",
   ],
