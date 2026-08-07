@@ -1,35 +1,41 @@
-import { Brain, Target, Calendar, Bell, BarChart, Shield } from "lucide-react";
+import { Search, Mail, Repeat, Target, Linkedin, MessageSquareReply, Coins } from "lucide-react";
 
-const features = [
+const agents = [
   {
-    icon: Brain,
-    title: "Qualification IA",
-    description: "Notre agent IA analyse chaque réponse et calcule un score de qualification en temps réel. Hot, warm ou cold — vous savez immédiatement qui contacter.",
+    icon: Search,
+    title: "Lead Finder",
+    description: "Trouve des prospects ciblés selon l'industrie, la taille d'entreprise, la localisation et le rôle. Bâtissez une liste qualifiée en minutes.",
+    cost: "5 crédits",
+  },
+  {
+    icon: Mail,
+    title: "Cold Email Writer",
+    description: "Génère des emails de prospection personnalisés et optimisés pour chaque prospect. Augmente votre taux de réponse.",
+    cost: "2 crédits",
+  },
+  {
+    icon: Repeat,
+    title: "Follow-up Sequencer",
+    description: "Crée des séquences de relance automatiques (3-5 emails) avec des angles différents pour maximiser la conversion.",
+    cost: "8 crédits",
   },
   {
     icon: Target,
-    title: "Scoring intelligent",
-    description: "Budget, besoin, timeline, décisionnaire — chaque critère est pondéré pour vous donner un score précis. Fini les leads qui ne convertissent pas.",
+    title: "Prospect Qualifier",
+    description: "Analyse et score vos prospects (hot, warm, cold) selon leur fit avec votre offre. Priorisez les meilleurs leads.",
+    cost: "3 crédits",
   },
   {
-    icon: Calendar,
-    title: "Booking automatique",
-    description: "Les leads qualifiés reçoivent directement des créneaux Google Calendar. Le RDV se planifie tout seul, vous n'avez qu'à être présent.",
+    icon: Linkedin,
+    title: "LinkedIn Outreach",
+    description: "Génère des messages LinkedIn personnalisés pour le social selling. Connexion, suivi et value proposition.",
+    cost: "2 crédits",
   },
   {
-    icon: Bell,
-    title: "Notifications temps réel",
-    description: "Un lead chaud entre ? Vous êtes alerté immédiatement par email. Ne laissez plus passer une opportunité par manque de réactivité.",
-  },
-  {
-    icon: BarChart,
-    title: "Dashboard clair",
-    description: "Visualisez tous vos leads, leurs scores, les RDVs pris et votre taux de conversion dans un dashboard simple et épuré.",
-  },
-  {
-    icon: Shield,
-    title: "Multi-canal",
-    description: "Vos leads arrivent de LinkedIn, Twitter ou votre landing page ? Tout est centralisé et qualifié au même endroit.",
+    icon: MessageSquareReply,
+    title: "Reply Handler",
+    description: "Analyse les réponses de vos prospects, les catégorise (intéressé, pas intéressé, out of office) et suggère la suite.",
+    cost: "1 crédit",
   },
 ];
 
@@ -40,25 +46,30 @@ export default function Features() {
         {/* Section header */}
         <div className="text-center max-w-2xl mx-auto mb-16">
           <h2 className="text-4xl sm:text-5xl font-bold tracking-tight mb-4">
-            Tout ce qu'il faut pour <span className="gradient-text">convertir</span>
+            6 agents IA pour <span className="gradient-text">tout votre prospecting</span>
           </h2>
           <p className="text-lg text-slate-600">
-            Un outil pensé pour les PME B2B et les développeurs qui veulent du résultat, pas de la complexité.
+            Chaque agent est spécialisé dans une tâche de prospection. Utilisez-les ensemble ou séparément.
+            Vous ne payez que ce que vous utilisez.
           </p>
         </div>
 
-        {/* Features grid */}
+        {/* Agents grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-          {features.map((feature, i) => (
+          {agents.map((agent, i) => (
             <div
               key={i}
               className="group p-8 rounded-2xl bg-white border border-slate-100 hover:border-brand-200 hover:shadow-xl hover:shadow-brand-500/5 transition-all"
             >
               <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-brand-50 to-purple-50 flex items-center justify-center mb-5 group-hover:scale-110 transition-transform">
-                <feature.icon className="w-6 h-6 text-brand-500" />
+                <agent.icon className="w-6 h-6 text-brand-500" />
               </div>
-              <h3 className="text-xl font-semibold mb-2">{feature.title}</h3>
-              <p className="text-slate-600 leading-relaxed">{feature.description}</p>
+              <h3 className="text-lg font-bold mb-2">{agent.title}</h3>
+              <p className="text-sm text-slate-500 mb-4">{agent.description}</p>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 text-amber-700 text-xs font-semibold">
+                <Coins className="w-3.5 h-3.5" />
+                {agent.cost}
+              </div>
             </div>
           ))}
         </div>
