@@ -5,7 +5,12 @@ import { eq, and } from "drizzle-orm";
 import { consumeCredits, getBalance, addCredits } from "@/lib/credits";
 import { callMistral, parseAIResponse } from "@/lib/mistral";
 import { sendGmail, domainHasMailServer } from "@/lib/gmail";
-import { domainSearch, findEmail, discoverCompanies } from "@/lib/hunter";
+import {
+  getDomainEmails,
+  getDomainFromCompanyName,
+  findEmailsByNameAndDomain,
+  type SnovCredentials,
+} from "@/lib/snov";
 
 // POST: Run a campaign step (or full pipeline)
 // Body: { step: "find" | "qualify" | "generate" | "enrich" | "send" | "all" }
@@ -38,41 +43,46 @@ export async function POST(
     const userInfo = userRows[0];
     const userCompany = userInfo?.company || user.fullName || "votre entreprise";
     const offerDesc = campaign.offerDescription || `Produit/service de ${userCompany}`;
-    const hunterKey = (userInfo?.apolloApiKey || process.env.HUNTER_API_KEY || null) as string | null;
+
+    // Snov.io credentials (stored as apollo_api_key for backward compat, plus env vars)
+    const snovClientId = (userInfo?.apolloApiKey as string) || process.env.SNOV_CLIENT_ID || null;
+    const snovClientSecret = process.env.SNOV_CLIENT_SECRET || null;
+    const snovCreds: SnovCredentials | null =
+      snovClientId && snovClientSecret
+        ? { clientId: snovClientId, clientSecret: snovClientSecret }
+        : null;
 
     const allAgents = await db.select().from(agents).where(eq(agents.isActive, true));
     const leadFinder = allAgents.find((a) => a.slug === "lead-finder");
     const qualifier = allAgents.find((a) => a.slug === "prospect-qualifier");
     const emailWriter = allAgents.find((a) => a.slug === "cold-email-writer");
 
-    // ============================================
-    // STEP 1: FIND (Hunter.io Discover + Domain Search)
-    // ============================================
+    // STEP 1: FIND
     if (step === "find" || step === "all") {
-      const findResult = await runFindStep(user.id, campaignId, campaign, leadFinder, offerDesc, hunterKey);
-      if (findResult.error) return findResult.response;
-      if (step === "find") return findResult.response;
+      const r = await runFindStep(user.id, campaignId, campaign, leadFinder, offerDesc, snovCreds);
+      if (r.error) return r.response;
+      if (step === "find") return r.response;
     }
 
     // STEP 2: QUALIFY
     if (step === "qualify" || step === "all") {
-      const qualifyResult = await runQualifyStep(user.id, campaignId, qualifier, offerDesc);
-      if (qualifyResult.error) return qualifyResult.response;
-      if (step === "qualify") return qualifyResult.response;
+      const r = await runQualifyStep(user.id, campaignId, qualifier, offerDesc);
+      if (r.error) return r.response;
+      if (step === "qualify") return r.response;
     }
 
-    // STEP 3: ENRICH (Hunter.io email finder)
+    // STEP 3: ENRICH
     if (step === "enrich" || step === "all") {
-      const enrichResult = await runEnrichStep(user.id, campaignId, hunterKey);
-      if (enrichResult.error) return enrichResult.response;
-      if (step === "enrich") return enrichResult.response;
+      const r = await runEnrichStep(user.id, campaignId, snovCreds);
+      if (r.error) return r.response;
+      if (step === "enrich") return r.response;
     }
 
     // STEP 4: GENERATE
     if (step === "generate" || step === "all") {
-      const genResult = await runGenerateStep(user.id, campaignId, emailWriter, offerDesc, userCompany);
-      if (genResult.error) return genResult.response;
-      if (step === "generate") return genResult.response;
+      const r = await runGenerateStep(user.id, campaignId, emailWriter, offerDesc, userCompany);
+      if (r.error) return r.response;
+      if (step === "generate") return r.response;
     }
 
     // STEP 5: SEND
@@ -80,21 +90,12 @@ export async function POST(
       return await runSendStep(user.id, campaignId);
     }
 
-    const finalProspects = await db
-      .select()
-      .from(prospects)
-      .where(eq(prospects.campaignId, campaignId));
-
-    const draftMessages = await db
-      .select()
-      .from(outreachMessages)
-      .where(eq(outreachMessages.userId, user.id));
-
+    const finalProspects = await db.select().from(prospects).where(eq(prospects.campaignId, campaignId));
+    const draftMessages = await db.select().from(outreachMessages).where(eq(outreachMessages.userId, user.id));
     const balance = await getBalance(user.id);
 
     return NextResponse.json({
-      success: true,
-      step: "all",
+      success: true, step: "all",
       stats: {
         totalProspects: finalProspects.length,
         qualified: finalProspects.filter((p) => p.status === "qualified" || (p.score ?? 0) >= 50).length,
@@ -102,166 +103,126 @@ export async function POST(
         hot: finalProspects.filter((p) => (p.score ?? 0) >= 70).length,
         draftMessages: draftMessages.filter((m) => m.status === "draft").length,
       },
-      balance,
-      nextStep: "send",
+      balance, nextStep: "send",
       message: "Pipeline terminé ! Vérifiez les messages et envoyez-les.",
     });
   } catch (error) {
     console.error("Campaign run error:", error);
-    return NextResponse.json({ error: "Erreur serveur lors de l'exécution" }, { status: 500 });
+    return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
   }
 }
 
 // ============================================
-// STEP 1: FIND — Hunter.io Discover (free) + Domain Search (1 credit/domain)
+// STEP 1: FIND — Snov.io Domain Emails
+// AI generates company names → Snov finds domains → Snov gets all emails
 // ============================================
 async function runFindStep(
-  userId: number,
-  campaignId: number,
-  campaign: any,
-  agent: any,
-  offerDesc: string,
-  hunterKey: string | null
+  userId: number, campaignId: number, campaign: any, agent: any,
+  offerDesc: string, snovCreds: SnovCredentials | null
 ) {
   if (!agent) {
-    const res = NextResponse.json({ error: "Agent Lead Finder introuvable" }, { status: 500 });
-    return { error: true, response: res };
+    return { error: true, response: NextResponse.json({ error: "Agent Lead Finder introuvable" }, { status: 500 }) };
   }
 
-  if (!hunterKey) {
+  if (!snovCreds) {
     return await runFindStepAI(userId, campaignId, campaign, agent, offerDesc);
   }
 
-  const consumed = await consumeCredits(userId, agent.creditCost, `Campagne #${campaignId}: Lead Finder (Hunter.io)`);
+  const consumed = await consumeCredits(userId, agent.creditCost, `Campagne #${campaignId}: Lead Finder (Snov.io)`);
   if (!consumed) {
-    const res = NextResponse.json(
-      { error: "Crédits insuffisants." },
-      { status: 402 }
-    );
-    return { error: true, response: res };
+    return { error: true, response: NextResponse.json({ error: "Crédits insuffisants." }, { status: 402 }) };
   }
 
   const [run] = await db.insert(agentRuns).values({
-    userId,
-    agentId: agent.id,
-    input: { campaignId, source: "hunter", criteria: campaign.targetCriteria },
-    creditsConsumed: agent.creditCost,
-    status: "running",
+    userId, agentId: agent.id,
+    input: { campaignId, source: "snov", criteria: campaign.targetCriteria },
+    creditsConsumed: agent.creditCost, status: "running",
   }).returning();
 
   try {
     const criteria = campaign.targetCriteria || {};
 
-    // Step 1a: Use Hunter Discover (FREE) to find companies matching criteria
-    const discoverQuery = [
-      criteria.industry ? `companies in ${criteria.industry}` : "",
-      criteria.location ? `in ${criteria.location}` : "",
-    ].filter(Boolean).join(" ") || "Companies in technology";
+    // Step 1a: AI generates real company names based on criteria
+    const aiPrompt = `L'utilisateur cherche des entreprises B2B pour son offre:\n${offerDesc}\n\nCritères: ${JSON.stringify(criteria)}\n\nGénère 5 noms d'entreprises RÉELLES et connues qui correspondent à ces critères.\n\nRéponds UNIQUEMENT en JSON:\n\`\`\`json\n{"companies": ["Nom Entreprise 1", "Nom Entreprise 2", ...]}\n\`\`\``;
+    const aiResult = await callMistral("Tu es un expert B2B. Réponds uniquement en JSON.", aiPrompt, {
+      temperature: 0.5, maxTokens: 800,
+    });
+    const parsed = parseAIResponse(aiResult.content);
+    const companyNames: string[] = parsed.json?.companies || [];
 
-    const discoverParams: any = { query: discoverQuery, limit: 10 };
-    if (criteria.companySize) {
-      const sizeMap: Record<string, string> = {
-        "1-10": "1-10", "11-50": "11-50", "51-200": "51-200",
-        "201-500": "201-500", "501-1000": "501-1000",
-      };
-      if (sizeMap[criteria.companySize]) discoverParams.headcount = sizeMap[criteria.companySize];
-    }
-    if (criteria.location) {
-      // Try to map location to country code
-      const countryMap: Record<string, string> = {
-        "Benin": "BJ", "Bénin": "BJ", "Nigeria": "NG", "Ghana": "GH",
-        "Senegal": "SN", "Sénégal": "SN", "France": "FR", "USA": "US",
-        "United States": "US", "UK": "GB", "Germany": "DE", "Spain": "ES",
-      };
-      if (countryMap[criteria.location]) discoverParams.country = countryMap[criteria.location];
+    if (companyNames.length === 0) {
+      throw new Error("AI n'a pas généré d'entreprises");
     }
 
-    let companies: { domain: string; name: string; industry: string | null }[] = [];
-    try {
-      const discoverResult = await discoverCompanies(hunterKey, discoverParams);
-      companies = discoverResult.companies;
-    } catch (e) {
-      console.log("Hunter Discover failed, using AI to suggest companies...");
-    }
+    // Step 1b: Use Snov.io to find domains from company names (bulk, up to 10)
+    const domainResults = await getDomainFromCompanyName(snovCreds, companyNames);
+    const companiesWithDomains = domainResults.filter((d) => d.domain);
 
-    // If Discover returns nothing, use AI to generate company domains
-    if (companies.length === 0) {
-      const aiPrompt = `L'utilisateur cherche des entreprises B2B pour son offre:\n${offerDesc}\n\nCritères: ${JSON.stringify(criteria)}\n\nGénère 5 noms d'entreprises RÉELLES qui correspondent à ces critères, avec leur domaine web.\n\nRéponds en JSON:\n\`\`\`json\n{"companies": [{"name": "Nom", "domain": "exemple.com"}]}\n\`\`\``;
-      const aiResult = await callMistral("Tu es un expert en B2B. Réponds uniquement en JSON.", aiPrompt, {
-        temperature: 0.5,
-        maxTokens: 1000,
-      });
-      const parsed = parseAIResponse(aiResult.content);
-      if (parsed.json?.companies) {
-        companies = parsed.json.companies.map((c: any) => ({
-          domain: c.domain,
-          name: c.name,
-          industry: criteria.industry || null,
-        }));
+    // If no domains found, fall back to AI generating domains
+    let domainsToSearch: { name: string; domain: string }[] = companiesWithDomains.map((d) => ({
+      name: d.name, domain: d.domain!,
+    }));
+
+    if (domainsToSearch.length === 0) {
+      // Ask AI for domains directly
+      const domainPrompt = `Donne-moi les domaines web de ces entreprises:\n${companyNames.join(", ")}\n\nJSON:\n\`\`\`json\n{"results": [{"name": "Nom", "domain": "exemple.com"}]}\n\`\`\``;
+      const domainAi = await callMistral("Tu es un expert B2B.", domainPrompt, { temperature: 0.3, maxTokens: 800 });
+      const domainParsed = parseAIResponse(domainAi.content);
+      if (domainParsed.json?.results) {
+        domainsToSearch = domainParsed.json.results.filter((r: any) => r.domain);
       }
     }
 
-    // Step 1b: For each company, use Hunter Domain Search (1 credit) to get ALL emails
+    // Step 1c: For each domain, get ALL emails via Snov.io Domain Emails
     let savedCount = 0;
-    let totalRemaining = 0;
+    let domainsSearched = 0;
 
-    for (const company of companies) {
+    for (const company of domainsToSearch.slice(0, 5)) {
       if (!company.domain) continue;
 
       try {
-        const domainResult = await domainSearch(hunterKey, company.domain, { limit: 10 });
-        totalRemaining = domainResult.remainingCredits;
+        const emails = await getDomainEmails(snovCreds, company.domain, 25000);
+        domainsSearched++;
 
-        for (const email of domainResult.emails) {
+        for (const emailInfo of emails) {
+          if (!emailInfo.email) continue;
+
           // Skip if already exists
           const existing = await db
             .select()
             .from(prospects)
-            .where(and(
-              eq(prospects.campaignId, campaignId),
-              eq(prospects.email, email.value)
-            ))
+            .where(and(eq(prospects.campaignId, campaignId), eq(prospects.email, emailInfo.email)))
             .limit(1);
           if (existing.length > 0) continue;
 
-          const fullName = [email.first_name, email.last_name].filter(Boolean).join(" ") || email.value.split("@")[0];
+          const fullName = [emailInfo.firstName, emailInfo.lastName].filter(Boolean).join(" ") || emailInfo.email.split("@")[0];
 
           await db.insert(prospects).values({
-            userId,
-            campaignId,
+            userId, campaignId,
             name: fullName,
-            email: email.value, // Real verified email from Hunter!
-            company: domainResult.organization || company.name,
-            linkedinUrl: email.linkedin_url,
-            source: "hunter",
-            score: email.confidence * 100,
+            email: emailInfo.email,
+            company: company.name,
+            source: "snov",
+            score: emailInfo.status === "valid" ? 80 : 50,
             status: "new",
             data: {
-              role: email.position,
-              seniority: email.seniority,
-              department: email.department,
+              role: emailInfo.position,
               domain: company.domain,
-              emailConfidence: email.confidence,
-              emailType: email.type,
-              fitReason: `${email.position || "Contact"} chez ${domainResult.organization || company.name} (confiance: ${email.confidence * 100}%)`,
+              emailStatus: emailInfo.status,
+              emailSource: emailInfo.source,
+              fitReason: `${emailInfo.position || "Contact"} chez ${company.name}`,
             },
           });
           savedCount++;
         }
       } catch (e) {
-        console.error(`Domain search failed for ${company.domain}:`, e);
+        console.error(`Snov domain emails failed for ${company.domain}:`, e);
       }
     }
 
     await db.update(agentRuns).set({
-      output: {
-        source: "hunter",
-        companiesFound: companies.length,
-        prospectsSaved: savedCount,
-        hunterCreditsRemaining: totalRemaining,
-      },
-      status: "completed",
-      completedAt: new Date(),
+      output: { source: "snov", companiesFound: domainsToSearch.length, domainsSearched, prospectsSaved: savedCount },
+      status: "completed", completedAt: new Date(),
     }).where(eq(agentRuns.id, run.id));
 
     const balance = await getBalance(userId);
@@ -269,25 +230,21 @@ async function runFindStep(
     return {
       error: false,
       response: NextResponse.json({
-        success: true,
-        step: "find",
-        source: "hunter",
+        success: true, step: "find", source: "snov",
         prospectsCreated: savedCount,
-        hunterCreditsRemaining: totalRemaining,
-        balance,
-        nextStep: "qualify",
-        message: `${savedCount} prospects avec vrais emails trouvés via Hunter.io (Domain Search sur ${companies.length} entreprises). Crédits Hunter restants: ${totalRemaining}`,
+        domainsSearched,
+        balance, nextStep: "qualify",
+        message: `${savedCount} prospects avec vrais emails trouvés via Snov.io (Domain Search sur ${domainsSearched} entreprises).`,
       }),
     };
   } catch (err) {
-    await addCredits(userId, agent.creditCost, `Remboursement: Lead Finder Hunter échec`, String(run.id));
+    await addCredits(userId, agent.creditCost, `Remboursement: Lead Finder Snov échec`, String(run.id));
     await db.update(agentRuns).set({
-      status: "failed",
-      error: err instanceof Error ? err.message : "Erreur",
+      status: "failed", error: err instanceof Error ? err.message : "Erreur",
       completedAt: new Date(),
     }).where(eq(agentRuns.id, run.id));
 
-    console.log("Hunter failed, falling back to AI...");
+    console.log("Snov failed, falling back to AI...");
     return await runFindStepAI(userId, campaignId, campaign, agent, offerDesc);
   }
 }
@@ -296,20 +253,18 @@ async function runFindStep(
 async function runFindStepAI(userId: number, campaignId: number, campaign: any, agent: any, offerDesc: string) {
   const consumed = await consumeCredits(userId, agent.creditCost, `Campagne #${campaignId}: Lead Finder (IA)`);
   if (!consumed) {
-    const res = NextResponse.json({ error: "Crédits insuffisants." }, { status: 402 });
-    return { error: true, response: res };
+    return { error: true, response: NextResponse.json({ error: "Crédits insuffisants." }, { status: 402 }) };
   }
 
   const [run] = await db.insert(agentRuns).values({
-    userId, agentId: agent.id,
-    input: { campaignId, source: "ai_fallback" },
+    userId, agentId: agent.id, input: { campaignId, source: "ai_fallback" },
     creditsConsumed: agent.creditCost, status: "running",
   }).returning();
 
   try {
     const criteria = campaign.targetCriteria || {};
     const criteriaStr = Object.entries(criteria).map(([k, v]) => `- ${k}: ${v}`).join("\n") || "Aucun critère";
-    const userMessage = `Contexte: L'utilisateur prospecte pour son offre:\n${offerDesc}\n\nGénère 8 prospects B2B.\nCritères:\n${criteriaStr}\n\nATTENTION: Ne génère PAS d'emails inventés.\n\nRéponds en JSON:\n\`\`\`json\n{"prospects": [{"name": "Nom", "company": "Entreprise", "role": "Poste", "fitScore": 85, "fitReason": "Pourquoi"}]}\n\`\`\``;
+    const userMessage = `Offre:\n${offerDesc}\n\nGénère 8 prospects B2B.\nCritères:\n${criteriaStr}\n\nATTENTION: Ne génère PAS d'emails.\n\nJSON:\n\`\`\`json\n{"prospects": [{"name": "Nom", "company": "Entreprise", "role": "Poste", "fitScore": 85, "fitReason": "Pourquoi"}]}\n\`\`\``;
     const result = await callMistral(agent.systemPrompt, userMessage, { temperature: 0.8, maxTokens: 2000 });
     const parsed = parseAIResponse(result.content);
 
@@ -336,7 +291,7 @@ async function runFindStepAI(userId: number, campaignId: number, campaign: any, 
       response: NextResponse.json({
         success: true, step: "find", source: "ai_fallback",
         prospectsCreated: savedCount, balance, nextStep: "qualify",
-        message: `${savedCount} prospects générés par IA (sans Hunter — ajoutez votre clé Hunter.io dans Paramètres).`,
+        message: `${savedCount} prospects générés par IA (sans Snov.io — ajoutez vos identifiants Snov.io dans Paramètres).`,
       }),
     };
   } catch (aiError) {
@@ -350,15 +305,15 @@ async function runFindStepAI(userId: number, campaignId: number, campaign: any, 
 }
 
 // ============================================
-// STEP 3: ENRICH — find emails for qualified prospects without email
+// STEP 3: ENRICH — Snov.io Email Finder for prospects without email
 // ============================================
-async function runEnrichStep(userId: number, campaignId: number, hunterKey: string | null) {
-  if (!hunterKey) {
+async function runEnrichStep(userId: number, campaignId: number, snovCreds: SnovCredentials | null) {
+  if (!snovCreds) {
     return {
       error: false,
       response: NextResponse.json({
         success: true, step: "enrich", enriched: 0,
-        message: "Pas de clé Hunter.io — enrichment ignoré.",
+        message: "Pas d'identifiants Snov.io — enrichment ignoré.",
       }),
     };
   }
@@ -379,27 +334,52 @@ async function runEnrichStep(userId: number, campaignId: number, hunterKey: stri
     };
   }
 
+  // Snov.io Email Finder supports bulk (up to 10 per request)
   let enriched = 0, failed = 0;
-  for (const prospect of needEnrich) {
-    const data = prospect.data as any;
-    try {
-      const result = await findEmail(hunterKey, {
-        fullName: prospect.name,
-        domain: data?.domain,
-      });
+  const batches = [];
 
-      if (result.email) {
-        await db.update(prospects).set({
-          email: result.email,
-          data: { ...data, hunterConfidence: result.confidence, enrichedAt: new Date().toISOString() },
-          updatedAt: new Date(),
-        }).where(eq(prospects.id, prospect.id));
-        enriched++;
-      } else {
-        failed++;
+  for (let i = 0; i < needEnrich.length; i += 10) {
+    batches.push(needEnrich.slice(i, i + 10));
+  }
+
+  for (const batch of batches) {
+    const prospectsToFind = batch.map((p) => {
+      const data = p.data as any;
+      const nameParts = p.name.split(" ");
+      return {
+        firstName: nameParts[0] || "",
+        lastName: nameParts.slice(1).join(" ") || "",
+        domain: data?.domain || "",
+      };
+    }).filter((p) => p.firstName && p.domain);
+
+    if (prospectsToFind.length === 0) {
+      failed += batch.length;
+      continue;
+    }
+
+    try {
+      const results = await findEmailsByNameAndDomain(snovCreds, prospectsToFind, 30000);
+
+      for (let i = 0; i < results.length && i < batch.length; i++) {
+        const prospect = batch[i];
+        const result = results[i];
+        const data = prospect.data as any;
+
+        if (result.email) {
+          await db.update(prospects).set({
+            email: result.email,
+            data: { ...data, snovStatus: result.status, enrichedAt: new Date().toISOString() },
+            updatedAt: new Date(),
+          }).where(eq(prospects.id, prospect.id));
+          enriched++;
+        } else {
+          failed++;
+        }
       }
     } catch (e) {
-      failed++;
+      console.error("Snov enrich batch failed:", e);
+      failed += batch.length;
     }
   }
 
@@ -407,13 +387,13 @@ async function runEnrichStep(userId: number, campaignId: number, hunterKey: stri
     error: false,
     response: NextResponse.json({
       success: true, step: "enrich", enriched, failed,
-      message: `${enriched} email(s) trouvé(s) via Hunter${failed > 0 ? `, ${failed} non trouvé(s)` : ""}.`,
+      message: `${enriched} email(s) trouvé(s) via Snov.io${failed > 0 ? `, ${failed} non trouvé(s)` : ""}.`,
     }),
   };
 }
 
 // ============================================
-// STEP 2: QUALIFY (IA scoring)
+// STEP 2: QUALIFY (IA scoring) — same as before
 // ============================================
 async function runQualifyStep(userId: number, campaignId: number, agent: any, offerDesc: string) {
   if (!agent) {
@@ -447,11 +427,11 @@ async function runQualifyStep(userId: number, campaignId: number, agent: any, of
 
   try {
     const prospectList = unqualified.map((p, i) => {
-      const data = p.data as any;
-      return `${i + 1}. ${p.name}${p.company ? " | " + p.company : ""}${data?.role ? " | " + data.role : ""}${data?.fitReason ? " | " + data.fitReason : ""}`;
+      const d = p.data as any;
+      return `${i + 1}. ${p.name}${p.company ? " | " + p.company : ""}${d?.role ? " | " + d.role : ""}${d?.fitReason ? " | " + d.fitReason : ""}`;
     }).join("\n");
 
-    const userMessage = `Offre:\n${offerDesc}\n\nQualifie ces ${unqualified.length} prospects (score 0-100, statut hot/warm/cold).\n\n${prospectList}\n\nJSON:\n\`\`\`json\n{"results": [{"name": "Nom", "score": 85, "status": "hot", "reason": "Justif"}]}\n\`\`\``;
+    const userMessage = `Offre:\n${offerDesc}\n\nQualifie ces ${unqualified.length} prospects (score 0-100, hot/warm/cold).\n\n${prospectList}\n\nJSON:\n\`\`\`json\n{"results": [{"name": "Nom", "score": 85, "status": "hot", "reason": "Justif"}]}\n\`\`\``;
     const result = await callMistral(agent.systemPrompt, userMessage, { temperature: 0.3, maxTokens: 2000 });
     const parsed = parseAIResponse(result.content);
 
@@ -467,8 +447,7 @@ async function runQualifyStep(userId: number, campaignId: number, agent: any, of
         if (prospect) {
           if (r.score >= 40) qualifiedCount++;
           await db.update(prospects).set({
-            score: r.score,
-            status: r.score >= 40 ? "qualified" : "new",
+            score: r.score, status: r.score >= 40 ? "qualified" : "new",
             data: { ...((prospect.data as any) || {}), qualifyReason: r.reason },
             updatedAt: new Date(),
           }).where(eq(prospects.id, prospect.id));
@@ -482,7 +461,7 @@ async function runQualifyStep(userId: number, campaignId: number, agent: any, of
       response: NextResponse.json({
         success: true, step: "qualify", totalProspects: unqualified.length,
         qualified: qualifiedCount, balance, nextStep: "enrich",
-        message: `${unqualified.length} prospects qualifiés. ${qualifiedCount} qualifiés (score ≥ 40).`,
+        message: `${unqualified.length} prospects qualifiés. ${qualifiedCount} qualifiés.`,
       }),
     };
   } catch (aiError) {
@@ -496,7 +475,7 @@ async function runQualifyStep(userId: number, campaignId: number, agent: any, of
 }
 
 // ============================================
-// STEP 4: GENERATE emails
+// STEP 4: GENERATE — same as before
 // ============================================
 async function runGenerateStep(userId: number, campaignId: number, agent: any, offerDesc: string, userCompany: string) {
   if (!agent) {
@@ -575,7 +554,7 @@ async function runGenerateStep(userId: number, campaignId: number, agent: any, o
 }
 
 // ============================================
-// STEP 5: SEND via Gmail
+// STEP 5: SEND via Gmail — same as before
 // ============================================
 async function runSendStep(userId: number, campaignId: number) {
   const campaignProspects = await db.select().from(prospects).where(eq(prospects.campaignId, campaignId));
@@ -626,10 +605,7 @@ async function runSendStep(userId: number, campaignId: number) {
       refreshToken,
       htmlContent: `<div style="font-family: -apple-system, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
         <div style="white-space: pre-wrap; line-height: 1.6; color: #334155; font-size: 15px;">${msg.content.replace(/\n/g, "<br>")}</div>
-        <br>
-        <p style="color: #94a3b8; font-size: 13px; border-top: 1px solid #f1f5f9; padding-top: 20px; margin-top: 30px;">
-          Envoyé via LeadFlow AI
-        </p>
+        <br><p style="color: #94a3b8; font-size: 13px; border-top: 1px solid #f1f5f9; padding-top: 20px; margin-top: 30px;">Envoyé via LeadFlow AI</p>
       </div>`,
     });
 
