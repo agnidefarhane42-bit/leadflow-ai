@@ -11,6 +11,7 @@ import {
   findEmailsByNameAndDomain,
   type SnovCredentials,
 } from "@/lib/snov";
+import { findCompanyProspects, findCompanyDomain } from "@/lib/email-finder";
 
 // POST: Run a campaign step (or full pipeline)
 // Body: { step: "find" | "qualify" | "generate" | "enrich" | "send" | "all" }
@@ -125,7 +126,7 @@ async function runFindStep(
   }
 
   if (!snovCreds) {
-    return await runFindStepAI(userId, campaignId, campaign, agent, offerDesc);
+    return await runFindStepHouse(userId, campaignId, campaign, agent, offerDesc);
   }
 
   const consumed = await consumeCredits(userId, agent.creditCost, `Campagne #${campaignId}: Lead Finder (Snov.io)`);
@@ -245,19 +246,129 @@ async function runFindStep(
     }).where(eq(agentRuns.id, run.id));
 
     console.log("Snov failed, falling back to AI...");
-    return await runFindStepAI(userId, campaignId, campaign, agent, offerDesc);
+    return await runFindStepHouse(userId, campaignId, campaign, agent, offerDesc);
   }
 }
 
-// Fallback: AI-generated prospects (no real emails)
-async function runFindStepAI(userId: number, campaignId: number, campaign: any, agent: any, offerDesc: string) {
+// ============================================
+// FALLBACK: House Email Finder (no API key needed)
+// Scrapes company websites, extracts emails, generates patterns, verifies MX
+// ============================================
+async function runFindStepHouse(
+  userId: number, campaignId: number, campaign: any, agent: any, offerDesc: string
+) {
+  const consumed = await consumeCredits(userId, agent.creditCost, `Campagne #${campaignId}: Lead Finder (House)`);
+  if (!consumed) {
+    return { error: true, response: NextResponse.json({ error: "Crédits insuffisants." }, { status: 402 }) };
+  }
+
+  const [run] = await db.insert(agentRuns).values({
+    userId, agentId: agent.id, input: { campaignId, source: "house" },
+    creditsConsumed: agent.creditCost, status: "running",
+  }).returning();
+
+  try {
+    const criteria = campaign.targetCriteria || {};
+
+    // Step 1: AI generates real company names
+    const aiPrompt = `L'utilisateur prospecte pour son offre:\n${offerDesc}\n\nCritères: ${JSON.stringify(criteria)}\n\nGénère 5 noms d'entreprises RÉELLES qui correspondent. Donne aussi leur domaine web si tu le connais.\n\nJSON:\n\`\`\`json\n{"companies": [{"name": "Nom", "domain": "exemple.com"}]}\n\`\`\``;
+    const aiResult = await callMistral("Tu es un expert B2B. Réponds uniquement en JSON.", aiPrompt, {
+      temperature: 0.5, maxTokens: 1000,
+    });
+    const parsed = parseAIResponse(aiResult.content);
+    const aiCompanies: { name: string; domain?: string }[] = parsed.json?.companies || [];
+
+    if (aiCompanies.length === 0) {
+      throw new Error("AI n'a pas généré d'entreprises");
+    }
+
+    // Step 2: For each company, find domain if not provided, then scrape for emails
+    let savedCount = 0;
+    let domainsSearched = 0;
+
+    for (const company of aiCompanies.slice(0, 5)) {
+      let domain = company.domain || "";
+
+      // Find domain if not provided
+      if (!domain) {
+        domain = await findCompanyDomain(company.name) || "";
+      }
+
+      if (!domain) {
+        console.log(`No domain found for ${company.name}`);
+        continue;
+      }
+
+      domainsSearched++;
+
+      // Scrape company website for emails + names
+      const houseProspects = await findCompanyProspects(domain, company.name);
+
+      for (const hp of houseProspects) {
+        // Skip if already exists
+        const existing = await db
+          .select()
+          .from(prospects)
+          .where(and(eq(prospects.campaignId, campaignId), eq(prospects.email, hp.email)))
+          .limit(1);
+        if (existing.length > 0) continue;
+
+        await db.insert(prospects).values({
+          userId, campaignId,
+          name: hp.name,
+          email: hp.email,
+          company: hp.company,
+          source: "house",
+          score: hp.emailConfidence,
+          status: "new",
+          data: {
+            role: hp.position,
+            domain: hp.domain,
+            emailConfidence: hp.emailConfidence,
+            emailSource: hp.source,
+            fitReason: hp.position ? `${hp.position} chez ${hp.company}` : `Contact chez ${hp.company}`,
+          },
+        });
+        savedCount++;
+      }
+    }
+
+    await db.update(agentRuns).set({
+      output: { source: "house", companiesFound: aiCompanies.length, domainsSearched, prospectsSaved: savedCount },
+      status: "completed", completedAt: new Date(),
+    }).where(eq(agentRuns.id, run.id));
+
+    const balance = await getBalance(userId);
+
+    return {
+      error: false,
+      response: NextResponse.json({
+        success: true, step: "find", source: "house",
+        prospectsCreated: savedCount, domainsSearched, balance, nextStep: "qualify",
+        message: `${savedCount} prospects trouvés via le système maison (scraping + MX sur ${domainsSearched} entreprises).`,
+      }),
+    };
+  } catch (err) {
+    await addCredits(userId, agent.creditCost, `Remboursement: Lead Finder House échec`, String(run.id));
+    await db.update(agentRuns).set({
+      status: "failed", error: err instanceof Error ? err.message : "Erreur",
+      completedAt: new Date(),
+    }).where(eq(agentRuns.id, run.id));
+
+    // Last resort: pure AI fallback (no emails)
+    return await runFindStepPureAI(userId, campaignId, campaign, agent, offerDesc);
+  }
+}
+
+// Ultimate fallback: AI only (no emails, just names + companies)
+async function runFindStepPureAI(userId: number, campaignId: number, campaign: any, agent: any, offerDesc: string) {
   const consumed = await consumeCredits(userId, agent.creditCost, `Campagne #${campaignId}: Lead Finder (IA)`);
   if (!consumed) {
     return { error: true, response: NextResponse.json({ error: "Crédits insuffisants." }, { status: 402 }) };
   }
 
   const [run] = await db.insert(agentRuns).values({
-    userId, agentId: agent.id, input: { campaignId, source: "ai_fallback" },
+    userId, agentId: agent.id, input: { campaignId, source: "ai_only" },
     creditsConsumed: agent.creditCost, status: "running",
   }).returning();
 
@@ -289,9 +400,9 @@ async function runFindStepAI(userId: number, campaignId: number, campaign: any, 
     return {
       error: false,
       response: NextResponse.json({
-        success: true, step: "find", source: "ai_fallback",
+        success: true, step: "find", source: "ai_only",
         prospectsCreated: savedCount, balance, nextStep: "qualify",
-        message: `${savedCount} prospects générés par IA (sans Snov.io — ajoutez vos identifiants Snov.io dans Paramètres).`,
+        message: `${savedCount} prospects générés par IA (sans emails).`,
       }),
     };
   } catch (aiError) {
