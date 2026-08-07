@@ -3,7 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { db, users } from "@/lib/db";
 import { eq } from "drizzle-orm";
 
-// PATCH: Update user profile
+// PATCH: Update user profile or integrations (Apollo key, etc.)
 export async function PATCH(req: NextRequest) {
   try {
     const user = await getCurrentUser();
@@ -12,11 +12,12 @@ export async function PATCH(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { fullName, company } = body;
+    const { fullName, company, apolloApiKey } = body;
 
     const updateData: any = { updatedAt: new Date() };
     if (fullName !== undefined) updateData.fullName = fullName;
     if (company !== undefined) updateData.company = company;
+    if (apolloApiKey !== undefined) updateData.apolloApiKey = apolloApiKey || null;
 
     const [updated] = await db
       .update(users)
@@ -34,6 +35,7 @@ export async function PATCH(req: NextRequest) {
         email: updated.email,
         fullName: updated.fullName,
         company: updated.company,
+        apolloApiKey: updated.apolloApiKey,
       },
     });
   } catch (error) {

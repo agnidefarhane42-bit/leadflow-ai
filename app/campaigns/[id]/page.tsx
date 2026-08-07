@@ -53,10 +53,11 @@ interface CampaignStats {
 }
 
 const PIPELINE_STEPS = [
-  { key: "find", label: "Lead Finder", description: "Génération de prospects via IA", icon: Search, credits: 5 },
-  { key: "qualify", label: "Qualification", description: "Scoring des prospects (hot/warm/cold)", icon: Target, credits: 3 },
-  { key: "generate", label: "Génération emails", description: "Création des messages d'outreach", icon: Mail, credits: 2 },
-  { key: "send", label: "Envoi", description: "Envoi des emails via Gmail", icon: Send, credits: 0 },
+  { key: "find", label: "Lead Finder", description: "Vrais prospects via Apollo.io", icon: Search, credits: 5 },
+  { key: "qualify", label: "Qualification", description: "Scoring IA (hot/warm/cold)", icon: Target, credits: 3 },
+  { key: "enrich", label: "Email Reveal", description: "Révélation des vrais emails via Apollo", icon: Mail, credits: 0 },
+  { key: "generate", label: "Rédaction", description: "Création des emails personnalisés", icon: Sparkles, credits: 2 },
+  { key: "send", label: "Envoi", description: "Envoi via Gmail", icon: Send, credits: 0 },
 ];
 
 export default function CampaignDetailPage() {
@@ -167,13 +168,13 @@ export default function CampaignDetailPage() {
     }
   };
 
-  // Run full pipeline: find → qualify → generate (no auto-send)
+  // Run full pipeline: find → qualify → enrich → generate (no auto-send)
   const runFullPipeline = async () => {
     setRunning(true);
     setPipelineError("");
     setStepResults({});
 
-    // Step 1: Find
+    // Step 1: Find (Apollo real prospects)
     const findResult = await runStep("find");
     if (!findResult) { setRunning(false); setCurrentStep(null); return; }
 
@@ -181,7 +182,11 @@ export default function CampaignDetailPage() {
     const qualifyResult = await runStep("qualify");
     if (!qualifyResult) { setRunning(false); setCurrentStep(null); return; }
 
-    // Step 3: Generate
+    // Step 3: Enrich (reveal real emails)
+    const enrichResult = await runStep("enrich");
+    if (!enrichResult) { setRunning(false); setCurrentStep(null); return; }
+
+    // Step 4: Generate emails
     const genResult = await runStep("generate");
     if (!genResult) { setRunning(false); setCurrentStep(null); return; }
 
@@ -345,7 +350,7 @@ export default function CampaignDetailPage() {
           </div>
 
           {/* Pipeline steps visual */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
             {PIPELINE_STEPS.map((step, i) => {
               const state = getStepState(step.key);
               const Icon = step.icon;
@@ -396,6 +401,7 @@ export default function CampaignDetailPage() {
                         <span className="text-xs font-semibold text-emerald-600">
                           {result.prospectsCreated ? `${result.prospectsCreated} prospects` :
                            result.qualified !== undefined ? `${result.qualified} qualifiés` :
+                           result.enriched !== undefined ? `${result.enriched} emails` :
                            result.messagesGenerated ? `${result.messagesGenerated} emails` :
                            result.sent !== undefined ? `${result.sent} envoyés` : "✓"}
                         </span>

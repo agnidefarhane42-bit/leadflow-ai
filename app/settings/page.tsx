@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { User, Building2, Mail, Loader2, Save, CheckCircle, Download, Coins } from "lucide-react";
+import { User, Building2, Mail, Loader2, Save, CheckCircle, Download, Coins, Key, ExternalLink, Search } from "lucide-react";
 
 interface UserInfo {
   email: string;
   fullName: string | null;
   company: string | null;
+  apolloApiKey: string | null;
 }
 
 export default function SettingsPage() {
@@ -14,8 +15,11 @@ export default function SettingsPage() {
   const [balance, setBalance] = useState(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingApollo, setSavingApollo] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [savedApollo, setSavedApollo] = useState(false);
   const [formData, setFormData] = useState({ fullName: "", company: "" });
+  const [apolloKey, setApolloKey] = useState("");
 
   useEffect(() => {
     fetchData();
@@ -31,6 +35,7 @@ export default function SettingsPage() {
         fullName: data.user?.fullName || "",
         company: data.user?.company || "",
       });
+      setApolloKey(data.user?.apolloApiKey || "");
     } catch {
       // silent
     } finally {
@@ -42,23 +47,39 @@ export default function SettingsPage() {
     e.preventDefault();
     setSaving(true);
     setSaved(false);
-
     try {
-      const res = await fetch("/api/settings", {
+      await fetch("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(formData),
       });
-      const data = await res.json();
-      if (data.success) {
-        setSaved(true);
-        fetchData();
-        setTimeout(() => setSaved(false), 3000);
-      }
+      setSaved(true);
+      fetchData();
+      setTimeout(() => setSaved(false), 3000);
     } catch {
       // silent
     } finally {
       setSaving(false);
+    }
+  };
+
+  const saveApolloKey = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingApollo(true);
+    setSavedApollo(false);
+    try {
+      await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apolloApiKey: apolloKey }),
+      });
+      setSavedApollo(true);
+      fetchData();
+      setTimeout(() => setSavedApollo(false), 3000);
+    } catch {
+      // silent
+    } finally {
+      setSavingApollo(false);
     }
   };
 
@@ -77,10 +98,9 @@ export default function SettingsPage() {
   return (
     <div className="min-h-screen pt-24 pb-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-3xl mx-auto">
-        {/* Header */}
         <div className="mb-8">
           <h1 className="text-3xl font-bold mb-2">Paramètres</h1>
-          <p className="text-slate-500">Gérez votre profil et vos données</p>
+          <p className="text-slate-500">Gérez votre profil et vos intégrations</p>
         </div>
 
         {/* Profile section */}
@@ -93,7 +113,7 @@ export default function SettingsPage() {
           {saved && (
             <div className="mb-4 flex items-center gap-2 px-4 py-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm">
               <CheckCircle className="w-4 h-4" />
-              Profil mis à jour avec succès
+              Profil mis à jour
             </div>
           )}
 
@@ -127,7 +147,7 @@ export default function SettingsPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">Email (non modifiable)</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">Email</label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input
@@ -150,11 +170,68 @@ export default function SettingsPage() {
           </form>
         </div>
 
-        {/* Credits summary */}
+        {/* Apollo.io Integration */}
+        <div className="bg-white rounded-2xl border border-slate-100 p-6 mb-6">
+          <h2 className="text-lg font-bold mb-1 flex items-center gap-2">
+            <Search className="w-5 h-5 text-brand-500" />
+            Apollo.io — Vrais emails de prospects
+          </h2>
+          <p className="text-sm text-slate-500 mb-4">
+            Connectez Apollo.io pour trouver de vrais prospects B2B avec de vrais emails vérifiés (au lieu d'emails inventés par l'IA).
+            Plan gratuit : 100 emails/mois.
+          </p>
+
+          {savedApollo && (
+            <div className="mb-4 flex items-center gap-2 px-4 py-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm">
+              <CheckCircle className="w-4 h-4" />
+              Clé Apollo.io enregistrée
+            </div>
+          )}
+
+          <form onSubmit={saveApolloKey} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">Clé API Apollo.io</label>
+              <div className="relative">
+                <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="password"
+                  value={apolloKey}
+                  onChange={(e) => setApolloKey(e.target.value)}
+                  placeholder="Collez votre clé API Apollo ici"
+                  className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-200 focus:border-brand-400 focus:ring-2 focus:ring-brand-100 outline-none transition"
+                />
+              </div>
+              <p className="text-xs text-slate-400 mt-1.5">
+                Pas encore de clé ? Créez un compte gratuit sur{" "}
+                <a href="https://app.apollo.io" target="_blank" rel="noopener noreferrer" className="text-brand-600 font-medium hover:underline inline-flex items-center gap-0.5">
+                  apollo.io <ExternalLink className="w-3 h-3" />
+                </a>
+                {" "}→ Settings → Integrations → API → Generate API Key
+              </p>
+            </div>
+
+            <button
+              type="submit"
+              disabled={savingApollo}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-slate-900 text-white font-semibold hover:bg-slate-800 transition disabled:opacity-50"
+            >
+              {savingApollo ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {apolloKey ? "Mettre à jour" : "Connecter Apollo.io"}
+            </button>
+          </form>
+
+          {apolloKey && (
+            <div className="mt-3 px-4 py-2 rounded-lg bg-emerald-50 border border-emerald-100 text-emerald-700 text-xs">
+              ✅ Apollo.io connecté — le Lead Finder utilisera Apollo pour trouver de vrais prospects
+            </div>
+          )}
+        </div>
+
+        {/* Credits */}
         <div className="bg-white rounded-2xl border border-slate-100 p-6 mb-6">
           <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
             <Coins className="w-5 h-5 text-amber-500" />
-            Crédits
+            Crédits LeadFlow
           </h2>
           <div className="flex items-center justify-between">
             <div>
@@ -170,31 +247,19 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Data export */}
+        {/* Export */}
         <div className="bg-white rounded-2xl border border-slate-100 p-6 mb-6">
           <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
             <Download className="w-5 h-5 text-slate-500" />
             Export de données
           </h2>
-          <p className="text-sm text-slate-500 mb-4">
-            Exportez tous vos prospects au format CSV (compatible Excel, Google Sheets).
-          </p>
           <button
             onClick={exportCSV}
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-slate-900 text-white font-semibold hover:bg-slate-800 transition"
           >
             <Download className="w-4 h-4" />
-            Exporter en CSV
+            Exporter prospects (CSV)
           </button>
-        </div>
-
-        {/* About */}
-        <div className="bg-white rounded-2xl border border-slate-100 p-6">
-          <h2 className="text-lg font-bold mb-2">À propos de LeadFlow AI</h2>
-          <p className="text-sm text-slate-500">
-            LeadFlow AI est une plateforme d'agents IA de prospecting pour les développeurs, SaaS et agences.
-            Payez à l'usage, sans abonnement.
-          </p>
         </div>
       </div>
     </div>

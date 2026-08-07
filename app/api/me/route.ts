@@ -13,9 +13,10 @@ export async function GET() {
 
     const balance = await getBalance(user.id);
 
-    // Check if Gmail is connected
     const userRows = await db.select().from(users).where(eq(users.id, user.id)).limit(1);
-    const googleConnected = !!userRows[0]?.googleRefreshToken;
+    const userInfo = userRows[0];
+    const googleConnected = !!userInfo?.googleRefreshToken;
+    const apolloConnected = !!userInfo?.apolloApiKey;
 
     return NextResponse.json({
       user: {
@@ -24,9 +25,11 @@ export async function GET() {
         company: user.company,
         role: user.role,
         plan: user.plan,
+        apolloApiKey: userInfo?.apolloApiKey || null,
       },
       balance,
       googleConnected,
+      apolloConnected,
     });
   } catch {
     return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
