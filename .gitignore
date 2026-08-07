@@ -11,3 +11,4 @@ build/
 drizzle/
 .vercel
 tsconfig.tsbuildinfo
+.env*

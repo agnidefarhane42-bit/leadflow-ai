@@ -301,8 +301,9 @@ async function runFindStepHouse(
 
       domainsSearched++;
 
-      // Scrape company website for emails + names
-      const houseProspects = await findCompanyProspects(domain, company.name);
+      // Scrape company website for emails + names, pass AI-generated contacts
+      const aiContacts = (company as any).contacts || [];
+      const houseProspects = await findCompanyProspects(domain, company.name, aiContacts);
 
       for (const hp of houseProspects) {
         // Skip if already exists

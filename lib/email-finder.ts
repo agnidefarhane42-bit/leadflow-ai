@@ -1,10 +1,11 @@
 // Email Finder - House System (no API key needed, 100% free)
 // 
 // Pipeline:
-// 1. AI generates company names → find their domains via web search
-// 2. Scrape company websites for emails (mailto: links, team pages)
-// 3. Generate email patterns from names found on team/about pages
-// 4. Verify via MX records (DNS over HTTPS) + SMTP check
+// 1. AI generates company names + person names → find domains
+// 2. Scrape company websites (sitemap.xml → team/about pages)
+// 3. GitHub API: search org members (free, 60 req/hour, no key needed)
+// 4. Generate email patterns from found names
+// 5. Verify via MX records (DNS over HTTPS)
 //
 // All done via standard HTTPS — works on Vercel serverless
 
@@ -17,7 +18,7 @@ export interface HouseProspect {
   domain: string;
   position: string | null;
   emailConfidence: number; // 0-100
-  source: string; // where we found it
+  source: string;
 }
 
 // ============================================
@@ -27,11 +28,8 @@ export async function checkMXRecord(domain: string): Promise<boolean> {
   try {
     const res = await fetch(`${DOH_BASE}?name=${domain}&type=MX`);
     const data = await res.json();
-    // If there are MX records, the domain accepts email
     const mxRecords = data.Answer?.filter((a: any) => a.type === 15) || [];
     if (mxRecords.length > 0) return true;
-
-    // Also check if there's an A record (some domains use A record for email)
     const aRecords = data.Answer?.filter((a: any) => a.type === 1) || [];
     return aRecords.length > 0;
   } catch {
@@ -40,10 +38,9 @@ export async function checkMXRecord(domain: string): Promise<boolean> {
 }
 
 // ============================================
-// FIND COMPANY DOMAIN — try common patterns
+// FIND COMPANY DOMAIN — try common patterns + HEAD requests
 // ============================================
 export async function findCompanyDomain(companyName: string): Promise<string | null> {
-  // Normalize company name to domain
   const cleaned = companyName
     .toLowerCase()
     .replace(/^(the\s+|le\s+|la\s+|les\s+)/, "")
@@ -55,54 +52,72 @@ export async function findCompanyDomain(companyName: string): Promise<string | n
     `${cleaned}.com`,
     `${cleaned}.io`,
     `${cleaned}.net`,
-    `${cleaned}.org`,
     `${cleaned}.co`,
-    `${cleaned}.fr`,
-    `${cleaned}.ai`,
-    `${cleaned}.dev`,
-    // With hyphen if multi-word
+    `${cleaned}.africa`,
+    `${cleaned}.ng`,
+    `${cleaned}.com.ng`,
     ...(companyName.includes(" ")
       ? [companyName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "") + ".com"]
       : []),
   ];
 
-  // Check each candidate by trying to fetch it
   for (const domain of candidates) {
     try {
       const res = await fetch(`https://${domain}`, {
         method: "HEAD",
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(4000),
         redirect: "follow",
       });
-      if (res.ok || res.status === 301 || res.status === 302 || res.status === 308) {
+      if (res.ok || [301, 302, 308].includes(res.status)) {
         return domain;
       }
     } catch {
-      // Try next
+      // try next
     }
   }
-
-  // Fallback: try DuckDuckGo instant answer
-  try {
-    const ddgRes = await fetch(
-      `https://api.duckduckgo.com/?q=${encodeURIComponent(companyName)}&format=json&no_html=1`,
-      { signal: AbortSignal.timeout(5000) }
-    );
-    const ddgData = await ddgRes.json();
-    if (ddgData.AbstractURL) {
-      const url = new URL(ddgData.AbstractURL);
-      return url.hostname.replace(/^www\./, "");
-    }
-  } catch {
-    // silent
-  }
-
   return null;
 }
 
 // ============================================
-// SCRAPE EMAILS FROM A WEB PAGE
-// Fetch HTML and extract email addresses
+// SITEMAP SCRAPING — fetch sitemap.xml, find team/about pages
+// ============================================
+async function getPagesFromSitemap(domain: string): Promise<string[]> {
+  const pages: string[] = [];
+  const sitemapUrls = [
+    `https://${domain}/sitemap.xml`,
+    `https://${domain}/sitemap_index.xml`,
+    `https://${domain}/sitemaps/sitemap.xml`,
+  ];
+
+  for (const sitemapUrl of sitemapUrls) {
+    try {
+      const res = await fetch(sitemapUrl, {
+        signal: AbortSignal.timeout(5000),
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; LeadFlowAI/1.0)" },
+      });
+      if (!res.ok) continue;
+
+      const xml = await res.text();
+      // Extract URLs from sitemap
+      const urlMatches = xml.matchAll(/<loc>([^<]+)<\/loc>/gi);
+      for (const match of urlMatches) {
+        const url = match[1].trim();
+        // Look for team/about/people/contact pages
+        if (/team|about|people|contact|staff|leadership|management|who-we-are|our-team/i.test(url)) {
+          pages.push(url);
+        }
+      }
+      if (pages.length > 0) break;
+    } catch {
+      // silent
+    }
+  }
+
+  return pages.slice(0, 5); // limit to 5 pages
+}
+
+// ============================================
+// SCRAPE EMAILS + NAMES FROM A WEB PAGE
 // ============================================
 export async function scrapeEmailsFromPage(url: string): Promise<{
   emails: string[];
@@ -111,9 +126,7 @@ export async function scrapeEmailsFromPage(url: string): Promise<{
   try {
     const res = await fetch(url, {
       signal: AbortSignal.timeout(8000),
-      headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; LeadFlowAI/1.0)",
-      },
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; LeadFlowAI/1.0)" },
       redirect: "follow",
     });
 
@@ -121,70 +134,73 @@ export async function scrapeEmailsFromPage(url: string): Promise<{
 
     const html = await res.text();
 
-    // Extract emails from mailto: links and plain text
+    // Extract emails
     const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
     const rawEmails = html.match(emailRegex) || [];
-    
-    // Filter out generic/role emails and deduplicate
-    const genericPrefixes = ["info", "contact", "support", "admin", "sales", "hello", "office", "noreply", "no-reply", "donotreply", "privacy", "legal", "press", "media", "help", "service", "team", "jobs", "careers"];
+
+    const genericPrefixes = ["info", "contact", "support", "admin", "sales", "hello", "office", "noreply", "no-reply", "privacy", "legal", "press", "media", "help", "service", "team", "jobs", "careers"];
     const personalEmails = [...new Set(rawEmails)]
       .filter((e) => !genericPrefixes.some((g) => e.toLowerCase().startsWith(g + "@")))
-      .filter((e) => !e.includes("example.com") && !e.includes("sentry.io") && !e.includes("wixpress"));
+      .filter((e) => !e.includes("example.com") && !e.includes("sentry.io") && !e.includes("wixpress") && !e.includes("schema.org"));
 
-    // Extract names from common patterns in HTML
-    // Look for patterns like "John Doe", "Jane Smith - CEO", etc.
-    const nameRegex = /(?:class="[^"]*(?:name|author|team|member|person|profile)[^"]*"[^>]*>)([^<]{3,50})</gi;
+    // Extract names from HTML — look for common team member patterns
     const names: { firstName: string; lastName: string; position: string | null }[] = [];
 
-    let match;
-    while ((match = nameRegex.exec(html)) !== null) {
-      const rawName = match[1].trim();
-      const parts = rawName.split(/\s+/);
-      if (parts.length >= 2 && parts.length <= 4) {
-        // Check if it looks like a real name (not a heading or nav item)
-        if (parts[0][0] === parts[0][0].toUpperCase() && parts[1][0] === parts[1][0].toUpperCase()) {
-          // Try to find position nearby
-          const contextStart = Math.max(0, match.index! - 200);
-          const contextEnd = Math.min(html.length, match.index! + 200);
-          const context = html.slice(contextStart, contextEnd);
-          const positionMatch = context.match(/\b(?:CEO|CTO|CFO|COO|CMO|Founder|Co-founder|Director|Manager|Head of|VP|President|Developer|Engineer|Designer|Consultant|Lead|Architect|Specialist|Analyst|Coordinator|Officer)\b/i);
-          
-          names.push({
-            firstName: parts[0],
-            lastName: parts.slice(1).join(" "),
-            position: positionMatch?.[0] || null,
-          });
+    // Pattern 1: JSON-LD structured data (most reliable)
+    const jsonLdMatches = html.matchAll(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi);
+    for (const match of jsonLdMatches) {
+      try {
+        const data = JSON.parse(match[1]);
+        const people = data.employee || data.employees || (data["@type"] === "Person" ? [data] : []);
+        for (const emp of people) {
+          if (emp.givenName && emp.familyName) {
+            names.push({
+              firstName: emp.givenName,
+              lastName: emp.familyName,
+              position: emp.jobTitle || emp.worksFor?.name || null,
+            });
+          } else if (emp.name && emp.name.includes(" ")) {
+            const parts = emp.name.split(" ");
+            names.push({ firstName: parts[0], lastName: parts.slice(1).join(" "), position: emp.jobTitle || null });
+          }
         }
+      } catch {
+        // invalid JSON
       }
     }
 
-    // Also try to extract from JSON-LD structured data
-    const jsonLdMatch = html.match(/<script type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi);
-    if (jsonLdMatch) {
-      for (const jsonLd of jsonLdMatch) {
-        try {
-          const jsonStr = jsonLd.replace(/<[^>]+>/g, "");
-          const data = JSON.parse(jsonStr);
-          if (data["@type"] === "Organization" && data.employee) {
-            for (const emp of data.employee) {
-              if (emp.givenName && emp.familyName) {
-                names.push({
-                  firstName: emp.givenName,
-                  lastName: emp.familyName,
-                  position: emp.jobTitle || null,
-                });
-              }
-            }
+    // Pattern 2: Common HTML patterns for team members
+    const namePatterns = [
+      /(?:class="[^"]*(?:team-name|member-name|person-name|employee-name|author-name|staff-name)[^"]*"[^>]*>)([^<]{3,50})</gi,
+      /<h[34][^>]*(?:team|member|staff|author|person)[^>]*>([^<]{3,50})</gi,
+      /data-name="([^"]{3,50})"/gi,
+    ];
+
+    for (const pattern of namePatterns) {
+      let match;
+      while ((match = pattern.exec(html)) !== null) {
+        const rawName = match[1].trim();
+        const parts = rawName.split(/\s+/);
+        if (parts.length >= 2 && parts.length <= 4) {
+          if (parts[0][0] === parts[0][0].toUpperCase() && parts[1][0] === parts[1][0].toUpperCase()) {
+            // Find position nearby
+            const contextStart = Math.max(0, match.index! - 300);
+            const contextEnd = Math.min(html.length, match.index! + 300);
+            const context = html.slice(contextStart, contextEnd);
+            const positionMatch = context.match(/\b(?:CEO|CTO|CFO|COO|CMO|Founder|Co-founder|Director|Manager|Head of|VP|President|Developer|Engineer|Designer|Consultant|Lead|Architect|Specialist|Analyst|Coordinator|Officer|Product|Tech|Sales|Marketing)\b/i);
+            names.push({
+              firstName: parts[0],
+              lastName: parts.slice(1).join(" "),
+              position: positionMatch?.[0] || null,
+            });
           }
-        } catch {
-          // invalid JSON-LD
         }
       }
     }
 
     return {
-      emails: personalEmails.slice(0, 20), // limit
-      names: names.slice(0, 30),
+      emails: personalEmails.slice(0, 20),
+      names: names.slice(0, 20),
     };
   } catch {
     return { emails: [], names: [] };
@@ -192,8 +208,72 @@ export async function scrapeEmailsFromPage(url: string): Promise<{
 }
 
 // ============================================
+// GITHUB API — find org members with public emails (free, no key)
+// 60 requests/hour without auth — enough for small batches
+// ============================================
+async function getGitHubOrgMembers(orgName: string): Promise<{
+  name: string;
+  email: string | null;
+  login: string;
+  bio: string | null;
+}[]> {
+  try {
+    // First, try to find the GitHub org
+    const orgRes = await fetch(`https://api.github.com/orgs/${orgName}/members?per_page=10`, {
+      headers: {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "LeadFlowAI/1.0",
+      },
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (!orgRes.ok) {
+      // Maybe it's a user, not an org
+      const userRes = await fetch(`https://api.github.com/users/${orgName}`, {
+        headers: { "Accept": "application/vnd.github+json", "User-Agent": "LeadFlowAI/1.0" },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (userRes.ok) {
+        const userData = await userRes.json();
+        if (userData.email) {
+          return [{ name: userData.name || userData.login, email: userData.email, login: userData.login, bio: userData.bio }];
+        }
+      }
+      return [];
+    }
+
+    const members = await orgRes.json();
+    const results: { name: string; email: string | null; login: string; bio: string | null }[] = [];
+
+    // Get each member's profile (up to 10) to find public email
+    for (const member of members.slice(0, 10)) {
+      try {
+        const profileRes = await fetch(`https://api.github.com/users/${member.login}`, {
+          headers: { "Accept": "application/vnd.github+json", "User-Agent": "LeadFlowAI/1.0" },
+          signal: AbortSignal.timeout(5000),
+        });
+        if (profileRes.ok) {
+          const profile = await profileRes.json();
+          results.push({
+            name: profile.name || profile.login,
+            email: profile.email,
+            login: profile.login,
+            bio: profile.bio,
+          });
+        }
+      } catch {
+        // skip
+      }
+    }
+
+    return results;
+  } catch {
+    return [];
+  }
+}
+
+// ============================================
 // GENERATE EMAIL PATTERNS
-// Given a name and domain, generate common email patterns
 // ============================================
 export function generateEmailPatterns(
   firstName: string,
@@ -205,6 +285,8 @@ export function generateEmailPatterns(
   const fl = f[0] || "";
   const ll = l[0] || "";
   const d = domain.replace(/^www\./, "");
+
+  if (!f || !l) return [];
 
   return [
     { email: `${f}.${l}@${d}`, pattern: "first.last", confidence: 90 },
@@ -221,88 +303,53 @@ export function generateEmailPatterns(
 }
 
 // ============================================
-// SMTP VERIFICATION — check if email exists
-// Note: may fail on serverless (port 25 blocked)
-// Falls back to MX-only verification
-// ============================================
-export async function verifyEmailSMTP(email: string): Promise<{
-  valid: boolean;
-  method: "smtp" | "mx" | "unknown";
-}> {
-  const domain = email.split("@")[1];
-  if (!domain) return { valid: false, method: "unknown" };
-
-  // Step 1: Check MX records (always works via DoH)
-  const hasMX = await checkMXRecord(domain);
-  if (!hasMX) return { valid: false, method: "mx" };
-
-  // Step 2: Try SMTP verification (may fail on serverless)
-  try {
-    // Get MX server
-    const mxRes = await fetch(`${DOH_BASE}?name=${domain}&type=MX`);
-    const mxData = await mxRes.json();
-    const mxRecords = (mxData.Answer || [])
-      .filter((a: any) => a.type === 15)
-      .map((a: any) => a.data)
-      .sort((a: any, b: any) => parseInt(a.split(" ")[0]) - parseInt(b.split(" ")[0]));
-
-    if (mxRecords.length === 0) {
-      // No MX but has A record — try connecting to domain directly
-      return { valid: true, method: "mx" };
-    }
-
-    // MX exists, domain accepts email
-    // SMTP RCPT TO check would go here but port 25 is blocked on Vercel
-    // So we confirm via MX that the domain accepts email
-    return { valid: true, method: "mx" };
-  } catch {
-    return { valid: true, method: "mx" };
-  }
-}
-
-// ============================================
-// MAIN: Find prospects for a company
-// Scrape website, extract emails + names, generate patterns, verify
+// MAIN: Find prospects for a company using all available methods
 // ============================================
 export async function findCompanyProspects(
   domain: string,
-  companyName: string
+  companyName: string,
+  aiGeneratedNames?: { name: string; role: string | null }[]
 ): Promise<HouseProspect[]> {
   const prospects: HouseProspect[] = [];
+  const foundEmails = new Set<string>();
 
   // Step 1: Check if domain has mail server
   const hasMX = await checkMXRecord(domain);
-  if (!hasMX) return [];
+  if (!hasMX) {
+    // No MX = domain doesn't accept email, skip
+    return [];
+  }
 
-  // Step 2: Scrape homepage + common team pages
+  // Step 2: Scrape homepage + sitemap-discovered pages
+  const sitemapPages = await getPagesFromSitemap(domain);
   const pagesToScrape = [
     `https://${domain}`,
     `https://${domain}/team`,
     `https://${domain}/about`,
     `https://${domain}/about-us`,
-    `https://${domain}/about`,
-    `https://${domain}/who-we-are`,
     `https://${domain}/people`,
     `https://${domain}/our-team`,
+    `https://${domain}/contact`,
+    ...sitemapPages,
   ];
 
-  const foundEmails = new Set<string>();
-  const foundNames: { firstName: string; lastName: string; position: string | null }[] = [];
+  // Deduplicate
+  const uniquePages = [...new Set(pagesToScrape)].slice(0, 8);
+  const scrapedNames: { firstName: string; lastName: string; position: string | null }[] = [];
 
-  for (const pageUrl of pagesToScrape) {
+  for (const pageUrl of uniquePages) {
     const result = await scrapeEmailsFromPage(pageUrl);
-result.emails.forEach((e: string) => foundEmails.add(e));
-    foundNames.push(...result.names);
+    result.emails.forEach((e: string) => foundEmails.add(e));
+    scrapedNames.push(...result.names);
   }
 
-  // Step 3: Add directly found emails (high confidence)
+  // Step 3: Add directly found emails (highest confidence)
   for (const email of Array.from(foundEmails)) {
     const domainPart = email.split("@")[1];
-    if (domainPart && domain.replace(/^www\./, "").includes(domainPart.replace(/^www\./, ""))) {
+    if (domainPart && (domainPart === domain || domainPart === domain.replace(/^www\./, ""))) {
       const localPart = email.split("@")[0];
-      // Try to extract name from email
-      let firstName = localPart.split(/[._-]/)[0] || localPart;
-      let lastName = localPart.split(/[._-]/)[1] || "";
+      let firstName = localPart.split(/[._\-]/)[0] || localPart;
+      let lastName = localPart.split(/[._\-]/).slice(1).join(" ") || "";
       firstName = firstName.charAt(0).toUpperCase() + firstName.slice(1);
       if (lastName) lastName = lastName.charAt(0).toUpperCase() + lastName.slice(1);
 
@@ -312,44 +359,100 @@ result.emails.forEach((e: string) => foundEmails.add(e));
         company: companyName,
         domain,
         position: null,
-        emailConfidence: 95, // directly found on website
+        emailConfidence: 95,
         source: "website-scrape",
       });
     }
   }
 
-  // Step 4: For found names, generate email patterns and verify
-  const uniqueNames = foundNames.slice(0, 10); // limit
-  for (const person of uniqueNames) {
+  // Step 4: For scraped names, generate email patterns + verify via MX
+  const uniqueScrapedNames = scrapedNames.slice(0, 10);
+  for (const person of uniqueScrapedNames) {
     const patterns = generateEmailPatterns(person.firstName, person.lastName, domain);
-
-    // Try the top 3 patterns
-    for (const pattern of patterns.slice(0, 3)) {
-      // Skip if already found
-      if (Array.from(foundEmails).includes(pattern.email)) continue;
-      if (prospects.some((p) => p.email === pattern.email)) continue;
-
-      // Verify the email
-      const verification = await verifyEmailSMTP(pattern.email);
-      if (verification.valid) {
+    // Take the top pattern (highest confidence) — MX already verified
+    if (patterns.length > 0) {
+      const topPattern = patterns[0];
+      if (!foundEmails.has(topPattern.email) && !prospects.some((p) => p.email === topPattern.email)) {
         prospects.push({
           name: `${person.firstName} ${person.lastName}`,
-          email: pattern.email,
+          email: topPattern.email,
           company: companyName,
           domain,
           position: person.position,
-          emailConfidence: pattern.confidence,
-          source: `pattern-${pattern.pattern}-mx-verified`,
+          emailConfidence: topPattern.confidence,
+          source: `pattern-${topPattern.pattern}`,
         });
-        break; // Only take the first valid pattern per person
       }
     }
   }
 
-  // Step 5: If we found no emails or names, generate pattern emails
-  // from the company domain itself (generic patterns)
+  // Step 5: GitHub — try to find org members with public emails
+  const githubOrgName = companyName
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/\s+/g, "");
+
+  const githubMembers = await getGitHubOrgMembers(githubOrgName);
+  for (const member of githubMembers) {
+    if (member.email) {
+      if (!prospects.some((p) => p.email === member.email)) {
+        const nameParts = member.name.split(" ");
+        prospects.push({
+          name: member.name,
+          email: member.email,
+          company: companyName,
+          domain,
+          position: member.bio?.slice(0, 50) || "Developer",
+          emailConfidence: 85,
+          source: "github-public",
+        });
+      }
+    } else {
+      const nameParts = member.name.split(" ");
+      if (nameParts.length >= 2) {
+      // No public email but we have a name — generate pattern
+      const patterns = generateEmailPatterns(nameParts[0], nameParts.slice(1).join(" "), domain);
+      if (patterns.length > 0 && !prospects.some((p) => p.email === patterns[0].email)) {
+        prospects.push({
+          name: member.name,
+          email: patterns[0].email,
+          company: companyName,
+          domain,
+          position: member.bio?.slice(0, 50) || "Developer",
+          emailConfidence: patterns[0].confidence - 10,
+          source: `github-pattern-${patterns[0].pattern}`,
+        });
+        }
+      }
+    }
+  }
+
+  // Step 6: AI-generated names — generate patterns (if provided)
+  if (aiGeneratedNames && aiGeneratedNames.length > 0) {
+    for (const person of aiGeneratedNames.slice(0, 5)) {
+      const nameParts = person.name.split(" ");
+      if (nameParts.length < 2) continue;
+
+      const patterns = generateEmailPatterns(nameParts[0], nameParts.slice(1).join(" "), domain);
+      for (const pattern of patterns.slice(0, 2)) {
+        if (!prospects.some((p) => p.email === pattern.email)) {
+          prospects.push({
+            name: person.name,
+            email: pattern.email,
+            company: companyName,
+            domain,
+            position: person.role,
+            emailConfidence: pattern.confidence - 20, // lower confidence for AI-generated names
+            source: `ai-pattern-${pattern.pattern}`,
+          });
+          break;
+        }
+      }
+    }
+  }
+
+  // Step 7: If still nothing, add generic contact email
   if (prospects.length === 0) {
-    // At least confirm the domain accepts email
     prospects.push({
       name: `Contact ${companyName}`,
       email: `contact@${domain.replace(/^www\./, "")}`,
