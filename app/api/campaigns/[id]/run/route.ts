@@ -4,7 +4,7 @@ import { db, campaigns, prospects, agents, agentRuns, outreachMessages, users } 
 import { eq, and } from "drizzle-orm";
 import { consumeCredits, getBalance, addCredits } from "@/lib/credits";
 import { callMistral, parseAIResponse } from "@/lib/mistral";
-import { sendGmail } from "@/lib/gmail";
+import { sendGmail, domainHasMailServer } from "@/lib/gmail";
 
 // POST: Run a campaign step (or full pipeline)
 // Body: { step: "find" | "qualify" | "generate" | "send" | "all" }
@@ -482,6 +482,14 @@ async function runSendStep(userId: number, campaignId: number) {
   for (const msg of draftMessages) {
     const prospect = campaignProspects.find((p) => p.id === msg.prospectId);
     if (!prospect?.email) {
+      await db.update(outreachMessages).set({ status: "bounced" }).where(eq(outreachMessages.id, msg.id));
+      failed++;
+      continue;
+    }
+
+    // Skip AI-hallucinated/invalid emails (domain has no mail server) to protect Gmail sender reputation
+    const domainValid = await domainHasMailServer(prospect.email);
+    if (!domainValid) {
       await db.update(outreachMessages).set({ status: "bounced" }).where(eq(outreachMessages.id, msg.id));
       failed++;
       continue;

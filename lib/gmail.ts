@@ -3,6 +3,7 @@
 // Free: 500 emails/day via Gmail API
 
 import { google } from "googleapis";
+import dns from "dns";
 
 interface SendGmailParams {
   to: string;
@@ -37,6 +38,33 @@ function getOAuth2Client(refreshToken: string) {
 }
 
 /**
+ * RFC 2047 encode a header value if it contains non-ASCII characters
+ * (fixes accented characters showing as mojibake in email clients)
+ */
+function encodeHeader(value: string): string {
+  const hasNonAscii = /[^\x00-\x7F]/.test(value);
+  if (!hasNonAscii) return value;
+  const base64 = Buffer.from(value, "utf-8").toString("base64");
+  return `=?UTF-8?B?${base64}?=`;
+}
+
+/**
+ * Check if a domain has valid MX (mail) records — used to filter out
+ * fake/AI-hallucinated email addresses before sending, to protect
+ * Gmail sender reputation from bounces.
+ */
+export async function domainHasMailServer(email: string): Promise<boolean> {
+  const domain = email.split("@")[1];
+  if (!domain) return false;
+  try {
+    const records = await dns.promises.resolveMx(domain);
+    return records.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Send an email via Gmail API using the user's refresh token
  */
 export async function sendGmail({ to, subject, textContent, htmlContent, replyTo, refreshToken }: SendGmailParams): Promise<SendGmailResult> {
@@ -48,26 +76,30 @@ export async function sendGmail({ to, subject, textContent, htmlContent, replyTo
     const oauth2Client = getOAuth2Client(refreshToken);
     const gmail = google.gmail({ version: "v1", auth: oauth2Client });
 
+    // Encode text/html bodies as base64 to safely carry UTF-8 accented characters
+    const textBase64 = Buffer.from(textContent, "utf-8").toString("base64").replace(/(.{76})/g, "$1\r\n");
+    const htmlBody = htmlContent || textContent.replace(/\n/g, "<br>");
+    const htmlBase64 = Buffer.from(htmlBody, "utf-8").toString("base64").replace(/(.{76})/g, "$1\r\n");
+
     // Build RFC 2822 email
     const boundary = "leadflow_boundary_" + Date.now();
-    const fromEmail = replyTo || "me";
     const lines = [
       `To: ${to}`,
-      `Subject: ${subject}`,
+      `Subject: ${encodeHeader(subject)}`,
       "MIME-Version: 1.0",
       `Content-Type: multipart/alternative; boundary="${boundary}"`,
       "",
       `--${boundary}`,
       "Content-Type: text/plain; charset=UTF-8",
-      "Content-Transfer-Encoding: 7bit",
+      "Content-Transfer-Encoding: base64",
       "",
-      textContent,
+      textBase64,
       "",
       `--${boundary}`,
-      'Content-Type: text/html; charset=UTF-8',
-      "Content-Transfer-Encoding: 7bit",
+      "Content-Type: text/html; charset=UTF-8",
+      "Content-Transfer-Encoding: base64",
       "",
-      htmlContent || textContent.replace(/\n/g, "<br>"),
+      htmlBase64,
       "",
       `--${boundary}--`,
     ];
@@ -78,8 +110,8 @@ export async function sendGmail({ to, subject, textContent, htmlContent, replyTo
 
     const rawEmail = lines.join("\r\n");
 
-    // Base64url encode
-    const encodedMessage = Buffer.from(rawEmail)
+    // Base64url encode the whole message for the Gmail API "raw" field
+    const encodedMessage = Buffer.from(rawEmail, "utf-8")
       .toString("base64")
       .replace(/\+/g, "-")
       .replace(/\//g, "_")

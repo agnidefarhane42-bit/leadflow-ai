@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { db, outreachMessages, prospects, users } from "@/lib/db";
 import { eq, and } from "drizzle-orm";
-import { sendGmail } from "@/lib/gmail";
+import { sendGmail, domainHasMailServer } from "@/lib/gmail";
 
 // POST: Send an outreach message via Gmail API (using user's own Gmail account)
 export async function POST(req: NextRequest) {
@@ -45,6 +45,21 @@ export async function POST(req: NextRequest) {
 
     if (!prospect.email) {
       return NextResponse.json({ error: "Ce prospect n'a pas d'adresse email" }, { status: 400 });
+    }
+
+    // Verify the domain can actually receive mail (avoid bounces from
+    // AI-hallucinated/invalid prospect emails, protects Gmail reputation)
+    const domainValid = await domainHasMailServer(prospect.email);
+    if (!domainValid) {
+      await db
+        .update(outreachMessages)
+        .set({ status: "bounced" })
+        .where(eq(outreachMessages.id, messageId));
+
+      return NextResponse.json(
+        { error: `L'adresse "${prospect.email}" semble invalide (domaine sans serveur mail). Message marqué comme échoué. Vérifiez/corrigez l'email de ce prospect.` },
+        { status: 400 }
+      );
     }
 
     // Get user's Google refresh token and email
