@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft, Loader2, Sparkles, Users, Target, Mail, Linkedin, Coins,
@@ -13,6 +13,7 @@ interface Campaign {
   name: string;
   status: string;
   targetCriteria: any;
+  offerDescription: string | null;
   agentId: number | null;
   createdAt: string;
 }
@@ -55,12 +56,11 @@ const PIPELINE_STEPS = [
   { key: "find", label: "Lead Finder", description: "Génération de prospects via IA", icon: Search, credits: 5 },
   { key: "qualify", label: "Qualification", description: "Scoring des prospects (hot/warm/cold)", icon: Target, credits: 3 },
   { key: "generate", label: "Génération emails", description: "Création des messages d'outreach", icon: Mail, credits: 2 },
-  { key: "send", label: "Envoi", description: "Envoi des emails via Resend", icon: Send, credits: 0 },
+  { key: "send", label: "Envoi", description: "Envoi des emails via Gmail", icon: Send, credits: 0 },
 ];
 
 export default function CampaignDetailPage() {
   const params = useParams();
-  const router = useRouter();
   const campaignId = parseInt(params.id as string);
 
   const [campaign, setCampaign] = useState<Campaign | null>(null);
@@ -68,6 +68,7 @@ export default function CampaignDetailPage() {
   const [messages, setMessages] = useState<OutreachMessage[]>([]);
   const [stats, setStats] = useState<CampaignStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false);
 
   // Pipeline state
   const [running, setRunning] = useState(false);
@@ -84,24 +85,50 @@ export default function CampaignDetailPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [campRes, statsRes] = await Promise.all([
-        fetch(`/api/campaigns/${campaignId}`),
-        fetch(`/api/campaigns/${campaignId}/run`),
-      ]);
+      // Only fetch campaign detail (no GET on /run which only supports POST)
+      const campRes = await fetch(`/api/campaigns/${campaignId}`);
+
+      if (!campRes.ok) {
+        if (campRes.status === 404) setNotFound(true);
+        setLoading(false);
+        return;
+      }
+
       const campData = await campRes.json();
-      const statsData = await statsRes.json();
 
       setCampaign(campData.campaign);
       setProspects(campData.prospects || []);
 
-      // Fetch messages
-      const msgRes = await fetch(`/api/outreach?campaignId=${campaignId}`);
-      const msgData = await msgRes.json();
-      setMessages(msgData.messages || []);
+      // Fetch messages for this campaign's prospects
+      const prospectIds = (campData.prospects || []).map((p: Prospect) => p.id);
+      let campaignMessages: OutreachMessage[] = [];
+      if (prospectIds.length > 0) {
+        const msgRes = await fetch(`/api/outreach?campaignId=${campaignId}`);
+        if (msgRes.ok) {
+          const msgData = await msgRes.json();
+          campaignMessages = msgData.messages || [];
+        }
+      }
+      setMessages(campaignMessages);
 
-      setStats(statsData.stats || null);
+      // Compute stats from the data we already have
+      const allProspects: Prospect[] = campData.prospects || [];
+      const computedStats: CampaignStats = {
+        totalProspects: allProspects.length,
+        newProspects: allProspects.filter((p) => p.status === "new").length,
+        qualified: allProspects.filter((p) => p.status === "qualified").length,
+        contacted: allProspects.filter((p) => p.status === "contacted").length,
+        replied: allProspects.filter((p) => p.status === "replied").length,
+        hot: allProspects.filter((p) => (p.score ?? 0) >= 70).length,
+        warm: allProspects.filter((p) => (p.score ?? 0) >= 40 && (p.score ?? 0) < 70).length,
+        cold: allProspects.filter((p) => (p.score ?? 0) < 40).length,
+        draftMessages: campaignMessages.filter((m) => m.status === "draft").length,
+        sentMessages: campaignMessages.filter((m) => m.status === "sent").length,
+        bouncedMessages: campaignMessages.filter((m) => m.status === "bounced").length,
+      };
+      setStats(computedStats);
     } catch {
-      // silent
+      // If something fails, don't show "not found" — might be a network error
     } finally {
       setLoading(false);
     }
@@ -236,7 +263,7 @@ export default function CampaignDetailPage() {
     );
   }
 
-  if (!campaign) {
+  if (notFound || !campaign) {
     return (
       <div className="min-h-screen pt-24 text-center">
         <p className="text-slate-500">Campagne introuvable</p>
@@ -264,6 +291,9 @@ export default function CampaignDetailPage() {
         <div className="flex items-start justify-between mb-8">
           <div>
             <h1 className="text-3xl font-bold mb-2">{campaign.name}</h1>
+            {campaign.offerDescription && (
+              <p className="text-slate-500 mb-3 max-w-2xl">{campaign.offerDescription}</p>
+            )}
             {campaign.targetCriteria && Object.keys(campaign.targetCriteria).length > 0 && (
               <div className="flex flex-wrap gap-2 mt-2">
                 {Object.entries(campaign.targetCriteria).map(([key, value]: [string, any]) => (
@@ -445,11 +475,11 @@ export default function CampaignDetailPage() {
           </div>
         )}
 
-        {/* Two columns: prospects + messages */}
+        {/* Two columns: Prospects + Messages */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Prospects table */}
-          <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
-            <div className="px-6 py-4 border-b border-slate-100">
+          {/* Prospects list */}
+          <div className="bg-white rounded-2xl border border-slate-100 p-6">
+            <div className="flex items-center justify-between mb-4">
               <h3 className="font-bold flex items-center gap-2">
                 <Users className="w-4 h-4 text-slate-400" />
                 Prospects ({prospects.length})
@@ -457,33 +487,39 @@ export default function CampaignDetailPage() {
             </div>
 
             {prospects.length === 0 ? (
-              <div className="px-6 py-12 text-center text-slate-400">
-                <Search className="w-8 h-8 mx-auto mb-2 text-slate-300" />
-                <p className="text-sm">Aucun prospect. Lancez le pipeline pour commencer.</p>
-              </div>
+              <p className="text-sm text-slate-400 py-8 text-center">
+                Aucun prospect. Lancez le pipeline ou ajoutez-en manuellement.
+              </p>
             ) : (
-              <div className="max-h-96 overflow-y-auto">
+              <div className="space-y-2 max-h-96 overflow-y-auto">
                 {prospects.map((p) => {
-                  const scoreColor = p.score >= 70 ? "text-red-500 bg-red-50" : p.score >= 40 ? "text-amber-600 bg-amber-50" : "text-slate-500 bg-slate-50";
+                  const score = p.score ?? 0;
+                  const scoreColor = score >= 70 ? "text-red-500 bg-red-50" : score >= 40 ? "text-amber-600 bg-amber-50" : "text-slate-400 bg-slate-50";
                   return (
-                    <div key={p.id} className="px-6 py-3 border-b border-slate-50 hover:bg-slate-50 transition flex items-center justify-between">
+                    <div key={p.id} className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-50 transition group">
+                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-sm font-bold ${scoreColor}`}>
+                        {score}
+                      </div>
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-sm truncate">{p.name}</p>
                         <p className="text-xs text-slate-400 truncate">
-                          {p.company || "—"}{(p.data as any)?.role ? ` · ${(p.data as any).role}` : ""}
+                          {p.company || "—"} {p.data?.role ? `· ${p.data.role}` : ""}
                         </p>
                       </div>
-                      <div className="flex items-center gap-2 ml-2">
-                        <span className={`px-2 py-1 rounded-lg text-xs font-bold ${scoreColor}`}>
-                          {p.score}
-                        </span>
-                        <button
-                          onClick={() => deleteProspect(p.id)}
-                          className="text-slate-300 hover:text-red-500 transition"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+                        p.status === "qualified" ? "bg-emerald-50 text-emerald-600" :
+                        p.status === "contacted" ? "bg-purple-50 text-purple-600" :
+                        p.status === "replied" ? "bg-blue-50 text-blue-600" :
+                        "bg-slate-50 text-slate-400"
+                      }`}>
+                        {p.status}
+                      </span>
+                      <button
+                        onClick={() => deleteProspect(p.id)}
+                        className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 transition"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   );
                 })}
@@ -492,43 +528,42 @@ export default function CampaignDetailPage() {
           </div>
 
           {/* Messages list */}
-          <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
-            <div className="px-6 py-4 border-b border-slate-100">
+          <div className="bg-white rounded-2xl border border-slate-100 p-6">
+            <div className="flex items-center justify-between mb-4">
               <h3 className="font-bold flex items-center gap-2">
                 <Mail className="w-4 h-4 text-slate-400" />
-                Messages générés ({messages.length})
+                Messages ({messages.length})
               </h3>
             </div>
 
             {messages.length === 0 ? (
-              <div className="px-6 py-12 text-center text-slate-400">
-                <Mail className="w-8 h-8 mx-auto mb-2 text-slate-300" />
-                <p className="text-sm">Aucun message. Lancez le pipeline pour générer des emails.</p>
-              </div>
+              <p className="text-sm text-slate-400 py-8 text-center">
+                Aucun message. Lancez le pipeline pour générer des emails.
+              </p>
             ) : (
-              <div className="max-h-96 overflow-y-auto">
+              <div className="space-y-2 max-h-96 overflow-y-auto">
                 {messages.map((msg) => {
                   const prospect = prospects.find((p) => p.id === msg.prospectId);
-                  const statusBadge: Record<string, string> = {
-                    draft: "bg-slate-100 text-slate-600",
-                    sent: "bg-emerald-100 text-emerald-700",
-                    bounced: "bg-red-100 text-red-600",
-                    replied: "bg-blue-100 text-blue-700",
-                  };
                   return (
-                    <div key={msg.id} className="px-6 py-4 border-b border-slate-50 hover:bg-slate-50 transition">
-                      <div className="flex items-center justify-between mb-2">
-                        <p className="font-medium text-sm">{prospect?.name || "—"}</p>
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusBadge[msg.status] || statusBadge.draft}`}>
-                          {msg.status === "draft" ? "Brouillon" : msg.status === "sent" ? "Envoyé" : msg.status === "bounced" ? "Échec" : msg.status}
+                    <div key={msg.id} className="p-3 rounded-lg border border-slate-100 hover:border-slate-200 transition">
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-sm font-medium truncate">{msg.subject || "(sans sujet)"}</p>
+                        <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ml-2 ${
+                          msg.status === "sent" ? "bg-emerald-50 text-emerald-600" :
+                          msg.status === "bounced" ? "bg-red-50 text-red-500" :
+                          "bg-amber-50 text-amber-600"
+                        }`}>
+                          {msg.status === "sent" ? "Envoyé" : msg.status === "bounced" ? "Échec" : "Brouillon"}
                         </span>
                       </div>
-                      <p className="text-xs font-medium text-slate-600 mb-1">{msg.subject}</p>
-                      <p className="text-xs text-slate-400 line-clamp-2 mb-2">{msg.content}</p>
+                      <p className="text-xs text-slate-400 mb-2">
+                        À: {prospect?.name || "—"} {prospect?.email ? `(${prospect.email})` : ""}
+                      </p>
+                      <p className="text-xs text-slate-500 line-clamp-2 mb-2">{msg.content}</p>
                       {msg.status === "draft" && (
                         <button
                           onClick={() => sendMessage(msg.id)}
-                          className="inline-flex items-center gap-1 text-xs text-emerald-600 font-semibold hover:underline"
+                          className="text-xs text-brand-600 font-semibold hover:underline inline-flex items-center gap-1"
                         >
                           <Send className="w-3 h-3" />
                           Envoyer
@@ -544,26 +579,36 @@ export default function CampaignDetailPage() {
 
         {/* Manual prospect modal */}
         {showManual && (
-          <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setShowManual(false)}>
-            <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4" onClick={(e) => e.stopPropagation()}>
-              <h3 className="text-lg font-bold mb-4">Ajouter un prospect manuellement</h3>
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setShowManual(false)}>
+            <div className="bg-white rounded-3xl p-8 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+              <h3 className="text-lg font-bold mb-4">Ajouter un prospect</h3>
               <form onSubmit={addManualProspect} className="space-y-3">
                 <input
-                  type="text" required placeholder="Nom complet" value={manualProspect.name}
+                  type="text"
+                  value={manualProspect.name}
                   onChange={(e) => setManualProspect({ ...manualProspect, name: e.target.value })}
-                  className="w-full px-4 py-2.5 rounded-lg border border-slate-200 focus:ring-2 focus:ring-brand-100 focus:border-brand-400 outline-none"
+                  required
+                  placeholder="Nom complet"
+                  className="w-full px-4 py-2.5 rounded-lg border border-slate-200 focus:border-brand-400 focus:ring-2 focus:ring-brand-100 outline-none transition"
                 />
                 <input
-                  type="email" placeholder="Email" value={manualProspect.email}
+                  type="email"
+                  value={manualProspect.email}
                   onChange={(e) => setManualProspect({ ...manualProspect, email: e.target.value })}
-                  className="w-full px-4 py-2.5 rounded-lg border border-slate-200 focus:ring-2 focus:ring-brand-100 focus:border-brand-400 outline-none"
+                  placeholder="Email"
+                  className="w-full px-4 py-2.5 rounded-lg border border-slate-200 focus:border-brand-400 focus:ring-2 focus:ring-brand-100 outline-none transition"
                 />
                 <input
-                  type="text" placeholder="Entreprise" value={manualProspect.company}
+                  type="text"
+                  value={manualProspect.company}
                   onChange={(e) => setManualProspect({ ...manualProspect, company: e.target.value })}
-                  className="w-full px-4 py-2.5 rounded-lg border border-slate-200 focus:ring-2 focus:ring-brand-100 focus:border-brand-400 outline-none"
+                  placeholder="Entreprise"
+                  className="w-full px-4 py-2.5 rounded-lg border border-slate-200 focus:border-brand-400 focus:ring-2 focus:ring-brand-100 outline-none transition"
                 />
-                <button type="submit" className="w-full py-2.5 rounded-lg bg-brand-500 text-white font-semibold hover:bg-brand-600 transition">
+                <button
+                  type="submit"
+                  className="w-full py-2.5 rounded-lg bg-gradient-to-r from-brand-500 to-purple-600 text-white font-semibold"
+                >
                   Ajouter
                 </button>
               </form>
