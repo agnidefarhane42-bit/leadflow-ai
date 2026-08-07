@@ -276,7 +276,12 @@ async function runFindStepHouse(
       temperature: 0.5, maxTokens: 1000,
     });
     const parsed = parseAIResponse(aiResult.content);
-    const aiCompanies: { name: string; domain?: string }[] = parsed.json?.companies || [];
+    const aiCompaniesRaw: any[] = parsed.json?.companies || [];
+    const aiCompanies: { name: string; domain?: string; contacts?: { name: string; role: string | null }[] }[] = aiCompaniesRaw.map((c: any) => {
+      if (typeof c === "string") return { name: c, domain: "" };
+      const contacts = c.contactName ? [{ name: c.contactName, role: c.contactRole || null }] : [];
+      return { name: c.name || "", domain: c.domain || "", contacts };
+    });
 
     if (aiCompanies.length === 0) {
       throw new Error("AI n'a pas généré d'entreprises");
@@ -295,14 +300,30 @@ async function runFindStepHouse(
       }
 
       if (!domain) {
-        console.log(`No domain found for ${company.name}`);
+        // No domain found — still use AI contact names with pattern guessing on a guessed domain
+        const guessedDomain = company.name.toLowerCase().replace(/[^a-z0-9]/g, "") + ".com";
+        if (company.contacts && company.contacts.length > 0) {
+          const hp = await findCompanyProspects(guessedDomain, company.name, company.contacts);
+          if (hp.length === 0) continue;
+          for (const p of hp) {
+            const existing = await db.select().from(prospects).where(and(eq(prospects.campaignId, campaignId), eq(prospects.email, p.email))).limit(1);
+            if (existing.length > 0) continue;
+            await db.insert(prospects).values({
+              userId, campaignId, name: p.name, email: p.email, company: p.company,
+              source: "house", score: p.emailConfidence, status: "new",
+              data: { role: p.position, domain: p.domain, emailConfidence: p.emailConfidence, emailSource: p.source, fitReason: p.position ? p.position + " chez " + p.company : "Contact chez " + p.company },
+            });
+            savedCount++;
+          }
+          domainsSearched++;
+        }
         continue;
       }
 
       domainsSearched++;
 
-      // Scrape company website for emails + names, pass AI-generated contacts
-      const aiContacts = (company as any).contacts || [];
+      // Scrape company website + pass AI-generated contact names for pattern generation
+      const aiContacts = company.contacts || [];
       const houseProspects = await findCompanyProspects(domain, company.name, aiContacts);
 
       for (const hp of houseProspects) {
