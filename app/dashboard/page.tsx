@@ -1,156 +1,191 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { TrendingUp, Users, Calendar, Target, Loader2 } from "lucide-react";
+import Link from "next/link";
+import { Users, Target, Mail, TrendingUp, Coins, Bot, ArrowRight, Plus, Sparkles } from "lucide-react";
 
-interface Lead {
-  id: number;
-  name: string;
-  email: string;
-  company: string | null;
-  phone: string | null;
-  score: number;
-  status: string;
-  source: string | null;
-  created_at: string;
+interface DashboardData {
+  balance: number;
+  totalProspects: number;
+  qualifiedProspects: number;
+  contactedProspects: number;
+  repliedProspects: number;
+  totalCampaigns: number;
+  activeCampaigns: number;
 }
 
-const statusColors: Record<string, string> = {
-  hot: "bg-red-100 text-red-700",
-  warm: "bg-amber-100 text-amber-700",
-  cold: "bg-blue-100 text-blue-700",
-  new: "bg-slate-100 text-slate-700",
-  qualified: "bg-purple-100 text-purple-700",
-  converted: "bg-emerald-100 text-emerald-700",
-};
-
-const statusLabels: Record<string, string> = {
-  hot: "Hot",
-  warm: "Warm",
-  cold: "Cold",
-  new: "Nouveau",
-  qualified: "Qualifié",
-  converted: "Converti",
-};
-
-export default function Dashboard() {
-  const [leads, setLeads] = useState<Lead[]>([]);
+export default function DashboardPage() {
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [recentLeads, setRecentLeads] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchLeads();
+    Promise.all([fetchStats(), fetchLeads()]);
   }, []);
+
+  const fetchStats = async () => {
+    try {
+      const [creditsRes, prospectsRes, campaignsRes] = await Promise.all([
+        fetch("/api/credits"),
+        fetch("/api/prospects"),
+        fetch("/api/campaigns"),
+      ]);
+
+      const credits = await creditsRes.json();
+      const prospectsData = await prospectsRes.json();
+      const campaignsData = await campaignsRes.json();
+
+      const prospects = prospectsData.prospects || [];
+      const campaigns = campaignsData.campaigns || [];
+
+      setData({
+        balance: credits.balance || 0,
+        totalProspects: prospects.length,
+        qualifiedProspects: prospects.filter((p: any) => p.status === "qualified").length,
+        contactedProspects: prospects.filter((p: any) => p.status === "contacted").length,
+        repliedProspects: prospects.filter((p: any) => p.status === "replied").length,
+        totalCampaigns: campaigns.length,
+        activeCampaigns: campaigns.filter((c: any) => c.status === "active").length,
+      });
+    } catch {
+      // silent
+    }
+  };
 
   const fetchLeads = async () => {
     try {
-      const res = await fetch("/api/leads?limit=50");
+      const res = await fetch("/api/leads");
       const data = await res.json();
-      setLeads(data.leads || []);
-    } catch (err) {
-      console.error("Failed to fetch leads:", err);
+      setRecentLeads(data.leads || data || []);
+    } catch {
+      // silent
     } finally {
       setLoading(false);
     }
   };
 
-  const totalLeads = leads.length;
-  const hotLeads = leads.filter((l) => l.status === "hot").length;
-  const convertedLeads = leads.filter((l) => l.status === "converted").length;
-  const conversionRate = totalLeads > 0 ? Math.round((convertedLeads / totalLeads) * 100) : 0;
-
-  const stats = [
-    { icon: Users, label: "Total leads", value: totalLeads.toString(), color: "from-brand-500 to-brand-600" },
-    { icon: TrendingUp, label: "Leads chauds", value: hotLeads.toString(), color: "from-red-500 to-orange-500" },
-    { icon: Calendar, label: "RDVs planifiés", value: convertedLeads.toString(), color: "from-emerald-500 to-teal-500" },
-    { icon: Target, label: "Taux de conversion", value: `${conversionRate}%`, color: "from-purple-500 to-pink-500" },
-  ];
+  if (loading || !data) {
+    return (
+      <div className="min-h-screen flex items-center justify-center pt-20">
+        <div className="w-8 h-8 border-4 border-brand-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen pt-24 pb-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-7xl mx-auto">
+        {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-3xl font-bold mb-2">Dashboard</h1>
-            <p className="text-slate-500">Vue d'ensemble de vos leads et rendez-vous</p>
+            <p className="text-slate-500">Vue d'ensemble de votre activité de prospecting</p>
           </div>
-          <button onClick={fetchLeads}
-            className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-sm font-medium transition">
-            Actualiser
-          </button>
+          <div className="flex gap-2">
+            <Link
+              href="/agents"
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-gradient-to-r from-brand-500 to-purple-600 text-white font-semibold hover:shadow-lg hover:shadow-brand-500/25 transition-all"
+            >
+              <Sparkles className="w-4 h-4" />
+              Lancer un agent
+            </Link>
+          </div>
+        </div>
+
+        {/* Credits banner */}
+        <div className="glass-card rounded-2xl p-6 mb-8 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center">
+              <Coins className="w-7 h-7 text-white" />
+            </div>
+            <div>
+              <p className="text-sm text-slate-500">Vos crédits</p>
+              <p className="text-3xl font-bold">{data.balance}</p>
+            </div>
+          </div>
+          <Link
+            href="/billing"
+            className="px-5 py-2.5 rounded-lg bg-amber-500 text-white font-semibold hover:bg-amber-600 transition"
+          >
+            Recharger
+          </Link>
         </div>
 
         {/* Stats grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          {stats.map((stat, i) => (
-            <div key={i} className="bg-white rounded-2xl border border-slate-100 p-6 hover:shadow-lg transition">
-              <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${stat.color} flex items-center justify-center mb-4`}>
-                <stat.icon className="w-6 h-6 text-white" />
-              </div>
-              <div className="text-3xl font-bold text-slate-900">{stat.value}</div>
-              <div className="text-sm text-slate-500 mt-1">{stat.label}</div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          <div className="bg-white rounded-2xl border border-slate-100 p-6 hover:shadow-lg transition">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-brand-500 to-brand-600 flex items-center justify-center mb-4">
+              <Target className="w-6 h-6 text-white" />
             </div>
-          ))}
+            <div className="text-3xl font-bold text-slate-900">{data.totalProspects}</div>
+            <div className="text-sm text-slate-500 mt-1">Prospects</div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-100 p-6 hover:shadow-lg transition">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center mb-4">
+              <Users className="w-6 h-6 text-white" />
+            </div>
+            <div className="text-3xl font-bold text-slate-900">{data.qualifiedProspects}</div>
+            <div className="text-sm text-slate-500 mt-1">Qualifiés</div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-100 p-6 hover:shadow-lg transition">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center mb-4">
+              <Mail className="w-6 h-6 text-white" />
+            </div>
+            <div className="text-3xl font-bold text-slate-900">{data.contactedProspects}</div>
+            <div className="text-sm text-slate-500 mt-1">Contactés</div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-100 p-6 hover:shadow-lg transition">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center mb-4">
+              <TrendingUp className="w-6 h-6 text-white" />
+            </div>
+            <div className="text-3xl font-bold text-slate-900">{data.repliedProspects}</div>
+            <div className="text-sm text-slate-500 mt-1">Ont répondu</div>
+          </div>
         </div>
 
-        {/* Leads table */}
-        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
-          <div className="px-6 py-4 border-b border-slate-100">
-            <h2 className="text-xl font-semibold">Leads récents</h2>
-          </div>
-          {loading ? (
-            <div className="px-6 py-16 text-center">
-              <Loader2 className="w-8 h-8 mx-auto text-brand-500 animate-spin" />
+        {/* Quick actions */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+          <Link href="/agents" className="group bg-white rounded-2xl border border-slate-100 p-6 hover:border-brand-200 hover:shadow-lg transition-all">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-brand-50 to-purple-50 flex items-center justify-center group-hover:scale-110 transition-transform">
+                <Bot className="w-6 h-6 text-brand-500" />
+              </div>
+              <div className="flex-1">
+                <h3 className="font-bold text-slate-900">Agents IA</h3>
+                <p className="text-sm text-slate-500">6 agents de prospecting</p>
+              </div>
+              <ArrowRight className="w-5 h-5 text-slate-300 group-hover:text-brand-500 group-hover:translate-x-1 transition" />
             </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="bg-slate-50 text-left">
-                    <th className="px-6 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Nom</th>
-                    <th className="px-6 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Entreprise</th>
-                    <th className="px-6 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Score</th>
-                    <th className="px-6 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Statut</th>
-                    <th className="px-6 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Source</th>
-                    <th className="px-6 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Date</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {leads.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="px-6 py-16 text-center text-slate-400">
-                        Aucun lead pour le moment. Partagez votre lien de qualification pour commencer !
-                      </td>
-                    </tr>
-                  ) : (
-                    leads.map((lead) => (
-                      <tr key={lead.id} className="hover:bg-slate-50 transition">
-                        <td className="px-6 py-4">
-                          <div className="font-medium text-slate-900">{lead.name}</div>
-                          <div className="text-sm text-slate-400">{lead.email}</div>
-                        </td>
-                        <td className="px-6 py-4 text-slate-600">{lead.company || "—"}</td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-slate-900">{lead.score}</span>
-                            <span className="text-xs text-slate-400">/170</span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${statusColors[lead.status] || statusColors.new}`}>
-                            {statusLabels[lead.status] || lead.status}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-slate-600 capitalize">{lead.source || "—"}</td>
-                        <td className="px-6 py-4 text-slate-500 text-sm">
-                          {new Date(lead.created_at).toLocaleDateString("fr-FR")}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+          </Link>
+
+          <Link href="/campaigns" className="group bg-white rounded-2xl border border-slate-100 p-6 hover:border-brand-200 hover:shadow-lg transition-all">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-brand-50 to-purple-50 flex items-center justify-center group-hover:scale-110 transition-transform">
+                <Target className="w-6 h-6 text-brand-500" />
+              </div>
+              <div className="flex-1">
+                <h3 className="font-bold text-slate-900">Campagnes</h3>
+                <p className="text-sm text-slate-500">{data.totalCampaigns} campagne{data.totalCampaigns > 1 ? "s" : ""}</p>
+              </div>
+              <ArrowRight className="w-5 h-5 text-slate-300 group-hover:text-brand-500 group-hover:translate-x-1 transition" />
             </div>
-          )}
+          </Link>
+
+          <Link href="/prospects" className="group bg-white rounded-2xl border border-slate-100 p-6 hover:border-brand-200 hover:shadow-lg transition-all">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-brand-50 to-purple-50 flex items-center justify-center group-hover:scale-110 transition-transform">
+                <Users className="w-6 h-6 text-brand-500" />
+              </div>
+              <div className="flex-1">
+                <h3 className="font-bold text-slate-900">Prospects</h3>
+                <p className="text-sm text-slate-500">{data.totalProspects} prospect{data.totalProspects > 1 ? "s" : ""}</p>
+              </div>
+              <ArrowRight className="w-5 h-5 text-slate-300 group-hover:text-brand-500 group-hover:translate-x-1 transition" />
+            </div>
+          </Link>
         </div>
       </div>
     </div>
