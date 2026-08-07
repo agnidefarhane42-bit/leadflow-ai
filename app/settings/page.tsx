@@ -7,7 +7,7 @@ interface UserInfo {
   email: string;
   fullName: string | null;
   company: string | null;
-  apolloApiKey: string | null;
+  hunterApiKey: string | null;
 }
 
 export default function SettingsPage() {
@@ -15,11 +15,11 @@ export default function SettingsPage() {
   const [balance, setBalance] = useState(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [savingApollo, setSavingApollo] = useState(false);
+  const [savingHunter, setSavingHunter] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [savedApollo, setSavedApollo] = useState(false);
+  const [savedHunter, setSavedHunter] = useState(false);
   const [formData, setFormData] = useState({ fullName: "", company: "" });
-  const [apolloKey, setApolloKey] = useState("");
+  const [hunterKey, setHunterKey] = useState("");
 
   useEffect(() => {
     fetchData();
@@ -35,7 +35,7 @@ export default function SettingsPage() {
         fullName: data.user?.fullName || "",
         company: data.user?.company || "",
       });
-      setApolloKey(data.user?.apolloApiKey || "");
+      setHunterKey(data.user?.hunterApiKey || "");
     } catch {
       // silent
     } finally {
@@ -63,23 +63,23 @@ export default function SettingsPage() {
     }
   };
 
-  const saveApolloKey = async (e: React.FormEvent) => {
+  const saveHunterKey = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSavingApollo(true);
-    setSavedApollo(false);
+    setSavingHunter(true);
+    setSavedHunter(false);
     try {
       await fetch("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apolloApiKey: apolloKey }),
+        body: JSON.stringify({ hunterApiKey: hunterKey }),
       });
-      setSavedApollo(true);
+      setSavedHunter(true);
       fetchData();
-      setTimeout(() => setSavedApollo(false), 3000);
+      setTimeout(() => setSavedHunter(false), 3000);
     } catch {
       // silent
     } finally {
-      setSavingApollo(false);
+      setSavingHunter(false);
     }
   };
 
@@ -170,59 +170,59 @@ export default function SettingsPage() {
           </form>
         </div>
 
-        {/* Apollo.io Integration */}
+        {/* Hunter.io Integration */}
         <div className="bg-white rounded-2xl border border-slate-100 p-6 mb-6">
           <h2 className="text-lg font-bold mb-1 flex items-center gap-2">
             <Search className="w-5 h-5 text-brand-500" />
-            Apollo.io — Vrais emails de prospects
+            Hunter.io — Vrais emails de prospects
           </h2>
           <p className="text-sm text-slate-500 mb-4">
-            Connectez Apollo.io pour trouver de vrais prospects B2B avec de vrais emails vérifiés (au lieu d'emails inventés par l'IA).
+            Connectez Hunter.io pour trouver de vrais prospects B2B avec de vrais emails vérifiés (au lieu d'emails inventés par l'IA).
             Plan gratuit : 100 emails/mois.
           </p>
 
-          {savedApollo && (
+          {savedHunter && (
             <div className="mb-4 flex items-center gap-2 px-4 py-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm">
               <CheckCircle className="w-4 h-4" />
-              Clé Apollo.io enregistrée
+              Clé Hunter.io enregistrée
             </div>
           )}
 
-          <form onSubmit={saveApolloKey} className="space-y-4">
+          <form onSubmit={saveHunterKey} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">Clé API Apollo.io</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">Clé API Hunter.io</label>
               <div className="relative">
                 <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input
                   type="password"
-                  value={apolloKey}
-                  onChange={(e) => setApolloKey(e.target.value)}
-                  placeholder="Collez votre clé API Apollo ici"
+                  value={hunterKey}
+                  onChange={(e) => setHunterKey(e.target.value)}
+                  placeholder="Collez votre clé API Hunter ici"
                   className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-200 focus:border-brand-400 focus:ring-2 focus:ring-brand-100 outline-none transition"
                 />
               </div>
               <p className="text-xs text-slate-400 mt-1.5">
                 Pas encore de clé ? Créez un compte gratuit sur{" "}
-                <a href="https://app.apollo.io" target="_blank" rel="noopener noreferrer" className="text-brand-600 font-medium hover:underline inline-flex items-center gap-0.5">
-                  apollo.io <ExternalLink className="w-3 h-3" />
+                <a href="https://hunter.io" target="_blank" rel="noopener noreferrer" className="text-brand-600 font-medium hover:underline inline-flex items-center gap-0.5">
+                  hunter.io <ExternalLink className="w-3 h-3" />
                 </a>
-                {" "}→ Settings → Integrations → API → Generate API Key
+                {" "}→ Profil → API keys → Create API key
               </p>
             </div>
 
             <button
               type="submit"
-              disabled={savingApollo}
+              disabled={savingHunter}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-slate-900 text-white font-semibold hover:bg-slate-800 transition disabled:opacity-50"
             >
-              {savingApollo ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              {apolloKey ? "Mettre à jour" : "Connecter Apollo.io"}
+              {savingHunter ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {hunterKey ? "Mettre à jour" : "Connecter Hunter.io"}
             </button>
           </form>
 
-          {apolloKey && (
+          {hunterKey && (
             <div className="mt-3 px-4 py-2 rounded-lg bg-emerald-50 border border-emerald-100 text-emerald-700 text-xs">
-              ✅ Apollo.io connecté — le Lead Finder utilisera Apollo pour trouver de vrais prospects
+              ✅ Hunter.io connecté — le Lead Finder utilisera Hunter pour trouver de vrais prospects
             </div>
           )}
         </div>
