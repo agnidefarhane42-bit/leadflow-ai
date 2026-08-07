@@ -77,7 +77,7 @@ export async function GET() {
 
     // Recent signups (last 5)
     const recentUsers = allUsers
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())
       .slice(0, 10)
       .map((u) => ({
         id: u.id,
