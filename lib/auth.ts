@@ -20,6 +20,7 @@ export interface SessionUser {
   fullName: string | null;
   company: string | null;
   plan: string | null;
+  role: string | null;
 }
 
 // --- Password hashing ---
@@ -79,7 +80,32 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
   const payload = await verifyToken(token);
   if (!payload) return null;
 
-  return payload;
+  // Fetch fresh role from DB (in case it was updated after login)
+  const userRows = await db.select().from(users).where(eq(users.id, payload.id)).limit(1);
+  if (userRows.length === 0) return null;
+
+  const dbUser = userRows[0];
+  return {
+    id: dbUser.id,
+    email: dbUser.email,
+    fullName: dbUser.fullName,
+    company: dbUser.company,
+    plan: dbUser.plan,
+    role: dbUser.role || "user",
+  };
+}
+
+// --- Check if current user is admin ---
+export async function isAdmin(): Promise<boolean> {
+  const user = await getCurrentUser();
+  return user?.role === "admin";
+}
+
+// --- Require admin (throws/returns null if not) ---
+export async function requireAdmin(): Promise<SessionUser | null> {
+  const user = await getCurrentUser();
+  if (!user || user.role !== "admin") return null;
+  return user;
 }
 
 // --- Auth: signup ---

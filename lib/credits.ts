@@ -1,5 +1,5 @@
-import { db, creditBalances, creditTransactions } from "./db";
-import { eq, sql } from "drizzle-orm";
+import { db, creditBalances, creditTransactions, users } from "./db";
+import { eq, sql, desc } from "drizzle-orm";
 
 // Initialize 10 free credits for a new user + signup_bonus transaction
 export async function initializeUserCredits(userId: number) {
@@ -39,14 +39,35 @@ export async function getTransactions(userId: number, limit = 20) {
     .limit(limit);
 }
 
+// Check if user is admin (unlimited credits)
+async function checkAdmin(userId: number): Promise<boolean> {
+  const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+  return rows[0]?.role === "admin";
+}
+
 // Consume credits (for agent runs). Returns false if insufficient balance.
+// ADMIN USERS: Always return true without consuming credits.
 export async function consumeCredits(
   userId: number,
   amount: number,
   description: string,
   referenceId?: string
 ): Promise<boolean> {
-  // Atomic check + decrement using a transaction-like approach
+  // Admin bypass — unlimited credits
+  const admin = await checkAdmin(userId);
+  if (admin) {
+    // Log the usage but don't deduct
+    await db.insert(creditTransactions).values({
+      userId,
+      amount: 0,
+      type: "agent_run",
+      description: `[ADMIN] ${description}`,
+      referenceId: referenceId || null,
+    });
+    return true;
+  }
+
+  // Atomic check + decrement
   const result = await db
     .update(creditBalances)
     .set({
@@ -124,6 +145,9 @@ export async function addCredits(
 
 // Check if user has enough credits
 export async function hasEnoughCredits(userId: number, amount: number): Promise<boolean> {
+  const admin = await checkAdmin(userId);
+  if (admin) return true; // Admin = unlimited
+
   const balance = await getBalance(userId);
   return balance >= amount;
 }

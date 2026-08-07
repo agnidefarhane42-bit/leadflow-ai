@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { Zap, Menu, X, Coins, LogOut, BarChart3, Target, Users, Settings } from "lucide-react";
+import { Zap, Menu, X, Coins, LogOut, BarChart3, Target, Users, Settings, Shield } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
 export default function Navbar() {
   const [open, setOpen] = useState(false);
-  const [user, setUser] = useState<{ email: string; fullName: string | null } | null>(null);
+  const [user, setUser] = useState<{ email: string; fullName: string | null; role: string | null; plan: string | null } | null>(null);
   const [balance, setBalance] = useState<number | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -49,6 +49,8 @@ export default function Navbar() {
   const isAuthPage = pathname === "/login" || pathname === "/signup";
   if (isAuthPage) return null;
 
+  const isAdmin = user?.role === "admin";
+
   const navLinks = user ? (
     <>
       <Link href="/dashboard" className="text-sm font-medium text-slate-600 hover:text-slate-900 transition">
@@ -63,6 +65,12 @@ export default function Navbar() {
       <Link href="/analytics" className="text-sm font-medium text-slate-600 hover:text-slate-900 transition">
         Analytics
       </Link>
+      {isAdmin && (
+        <Link href="/admin" className="text-sm font-semibold text-amber-600 hover:text-amber-700 transition flex items-center gap-1">
+          <Shield className="w-3.5 h-3.5" />
+          Admin
+        </Link>
+      )}
     </>
   ) : (
     <>
@@ -96,13 +104,20 @@ export default function Navbar() {
             {user ? (
               <div className="flex items-center gap-3 ml-2">
                 {/* Credits badge */}
-                <Link
-                  href="/billing"
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-50 border border-amber-200 hover:bg-amber-100 transition"
-                >
-                  <Coins className="w-4 h-4 text-amber-500" />
-                  <span className="text-sm font-bold text-amber-700">{balance ?? "..."}</span>
-                </Link>
+                {isAdmin ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-100 border border-amber-300">
+                    <Shield className="w-4 h-4 text-amber-600" />
+                    <span className="text-sm font-bold text-amber-700">Illimité</span>
+                  </span>
+                ) : (
+                  <Link
+                    href="/billing"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-50 border border-amber-200 hover:bg-amber-100 transition"
+                  >
+                    <Coins className="w-4 h-4 text-amber-500" />
+                    <span className="text-sm font-bold text-amber-700">{balance ?? "..."}</span>
+                  </Link>
+                )}
 
                 {/* User menu */}
                 <div className="relative" ref={menuRef}>
@@ -127,6 +142,11 @@ export default function Navbar() {
                       <Link href="/settings" className="w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition" onClick={() => setMenuOpen(false)}>
                         <Settings className="w-4 h-4 text-slate-400" /> Paramètres
                       </Link>
+                      {isAdmin && (
+                        <Link href="/admin" className="w-full px-4 py-2 text-left text-sm text-amber-600 hover:bg-amber-50 flex items-center gap-2 transition" onClick={() => setMenuOpen(false)}>
+                          <Shield className="w-4 h-4" /> Admin Dashboard
+                        </Link>
+                      )}
                       <button
                         onClick={logout}
                         className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 transition border-t border-slate-100 mt-1 pt-2"
@@ -179,8 +199,13 @@ export default function Navbar() {
               <Link href="/analytics" className="block text-sm font-medium text-slate-600" onClick={() => setOpen(false)}>
                 Analytics
               </Link>
+              {isAdmin && (
+                <Link href="/admin" className="block text-sm font-semibold text-amber-600" onClick={() => setOpen(false)}>
+                  ⚡ Admin Dashboard
+                </Link>
+              )}
               <Link href="/billing" className="block text-sm font-medium text-slate-600" onClick={() => setOpen(false)}>
-                Crédits: {balance ?? "..."}
+                {isAdmin ? "Crédits: Illimité" : `Crédits: ${balance ?? "..."}`}
               </Link>
               <Link href="/settings" className="block text-sm font-medium text-slate-600" onClick={() => setOpen(false)}>
                 Paramètres
