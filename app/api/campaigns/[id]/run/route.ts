@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+
+export const maxDuration = 60; // 60 seconds for scraping + AI
 import { getCurrentUser } from "@/lib/auth";
 import { db, campaigns, prospects, agents, agentRuns, outreachMessages, users } from "@/lib/db";
 import { eq, and } from "drizzle-orm";
@@ -271,9 +273,9 @@ async function runFindStepHouse(
     const criteria = campaign.targetCriteria || {};
 
     // Step 1: AI generates real company names
-    const aiPrompt = `L'utilisateur prospecte pour son offre:\n${offerDesc}\n\nCritères: ${JSON.stringify(criteria)}\n\nGénère 5 noms d'entreprises RÉELLES qui correspondent. Donne aussi leur domaine web si tu le connais.\n\nJSON:\n\`\`\`json\n{"companies": [{"name": "Nom", "domain": "exemple.com"}]}\n\`\`\``;
-    const aiResult = await callMistral("Tu es un expert B2B. Réponds uniquement en JSON.", aiPrompt, {
-      temperature: 0.5, maxTokens: 1000,
+    const aiPrompt = `L'utilisateur prospecte pour son offre:\n${offerDesc}\n\nCritères: ${JSON.stringify(criteria)}\n\nGénère 5 entreprises RÉELLES qui correspondent à ces critères. Pour chaque entreprise donne son nom, son domaine web (site web), et 1 personne clé qui y travaille avec son rôle.\n\nRéponds UNIQUEMENT en JSON:\n\`\`\`json\n{"companies": [{"name": "Nom Entreprise", "domain": "exemple.com", "contactName": "Prénom Nom", "contactRole": "CTO"}]}\n\`\`\``;
+    const aiResult = await callMistral("Tu es un expert B2B. Réponds uniquement en JSON, sans texte supplémentaire.", aiPrompt, {
+      temperature: 0.3, maxTokens: 1000,
     });
     const parsed = parseAIResponse(aiResult.content);
     const aiCompaniesRaw: any[] = parsed.json?.companies || [];
@@ -283,8 +285,10 @@ async function runFindStepHouse(
       return { name: c.name || "", domain: c.domain || "", contacts };
     });
 
-    if (aiCompanies.length === 0) {
-      throw new Error("AI n'a pas généré d'entreprises");
+    if (aiCompanies.length === 0 || !aiCompanies[0]?.name) {
+      console.error("[House Finder] AI response:", aiResult.content?.slice(0, 500));
+      console.error("[House Finder] Parsed JSON:", JSON.stringify(parsed.json)?.slice(0, 500));
+      throw new Error("AI n'a pas généré d'entreprises valides");
     }
 
     // Step 2: For each company, find domain if not provided, then scrape for emails
