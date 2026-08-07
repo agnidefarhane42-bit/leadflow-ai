@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { Users, Target, Mail, TrendingUp, Coins, Bot, ArrowRight, Plus, Sparkles } from "lucide-react";
+import { Users, Target, Mail, TrendingUp, Coins, Bot, ArrowRight, Sparkles } from "lucide-react";
 
 interface DashboardData {
   balance: number;
@@ -48,7 +48,16 @@ export default function DashboardPage() {
         activeCampaigns: campaigns.filter((c: any) => c.status === "active").length,
       });
     } catch {
-      // silent
+      // Set empty data instead of leaving null — prevents infinite loading
+      setData({
+        balance: 0,
+        totalProspects: 0,
+        qualifiedProspects: 0,
+        contactedProspects: 0,
+        repliedProspects: 0,
+        totalCampaigns: 0,
+        activeCampaigns: 0,
+      });
     }
   };
 
@@ -58,19 +67,30 @@ export default function DashboardPage() {
       const data = await res.json();
       setRecentLeads(data.leads || data || []);
     } catch {
-      // silent
+      // silent — empty leads is fine
     } finally {
       setLoading(false);
     }
   };
 
-  if (loading || !data) {
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center pt-20">
         <div className="w-8 h-8 border-4 border-brand-500 border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
+
+  // Use data or empty defaults (handles edge case where data fetch failed)
+  const d = data ?? {
+    balance: 0,
+    totalProspects: 0,
+    qualifiedProspects: 0,
+    contactedProspects: 0,
+    repliedProspects: 0,
+    totalCampaigns: 0,
+    activeCampaigns: 0,
+  };
 
   return (
     <div className="min-h-screen pt-24 pb-12 px-4 sm:px-6 lg:px-8">
@@ -100,7 +120,7 @@ export default function DashboardPage() {
             </div>
             <div>
               <p className="text-sm text-slate-500">Vos crédits</p>
-              <p className="text-3xl font-bold">{data.balance}</p>
+              <p className="text-3xl font-bold">{d.balance}</p>
             </div>
           </div>
           <Link
@@ -117,7 +137,7 @@ export default function DashboardPage() {
             <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-brand-500 to-brand-600 flex items-center justify-center mb-4">
               <Target className="w-6 h-6 text-white" />
             </div>
-            <div className="text-3xl font-bold text-slate-900">{data.totalProspects}</div>
+            <div className="text-3xl font-bold text-slate-900">{d.totalProspects}</div>
             <div className="text-sm text-slate-500 mt-1">Prospects</div>
           </div>
 
@@ -125,7 +145,7 @@ export default function DashboardPage() {
             <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center mb-4">
               <Users className="w-6 h-6 text-white" />
             </div>
-            <div className="text-3xl font-bold text-slate-900">{data.qualifiedProspects}</div>
+            <div className="text-3xl font-bold text-slate-900">{d.qualifiedProspects}</div>
             <div className="text-sm text-slate-500 mt-1">Qualifiés</div>
           </div>
 
@@ -133,7 +153,7 @@ export default function DashboardPage() {
             <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center mb-4">
               <Mail className="w-6 h-6 text-white" />
             </div>
-            <div className="text-3xl font-bold text-slate-900">{data.contactedProspects}</div>
+            <div className="text-3xl font-bold text-slate-900">{d.contactedProspects}</div>
             <div className="text-sm text-slate-500 mt-1">Contactés</div>
           </div>
 
@@ -141,7 +161,7 @@ export default function DashboardPage() {
             <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center mb-4">
               <TrendingUp className="w-6 h-6 text-white" />
             </div>
-            <div className="text-3xl font-bold text-slate-900">{data.repliedProspects}</div>
+            <div className="text-3xl font-bold text-slate-900">{d.repliedProspects}</div>
             <div className="text-sm text-slate-500 mt-1">Ont répondu</div>
           </div>
         </div>
@@ -168,7 +188,7 @@ export default function DashboardPage() {
               </div>
               <div className="flex-1">
                 <h3 className="font-bold text-slate-900">Campagnes</h3>
-                <p className="text-sm text-slate-500">{data.totalCampaigns} campagne{data.totalCampaigns > 1 ? "s" : ""}</p>
+                <p className="text-sm text-slate-500">{d.totalCampaigns} campagne{d.totalCampaigns > 1 ? "s" : ""}</p>
               </div>
               <ArrowRight className="w-5 h-5 text-slate-300 group-hover:text-brand-500 group-hover:translate-x-1 transition" />
             </div>
@@ -181,7 +201,7 @@ export default function DashboardPage() {
               </div>
               <div className="flex-1">
                 <h3 className="font-bold text-slate-900">Prospects</h3>
-                <p className="text-sm text-slate-500">{data.totalProspects} prospect{data.totalProspects > 1 ? "s" : ""}</p>
+                <p className="text-sm text-slate-500">{d.totalProspects} prospect{d.totalProspects > 1 ? "s" : ""}</p>
               </div>
               <ArrowRight className="w-5 h-5 text-slate-300 group-hover:text-brand-500 group-hover:translate-x-1 transition" />
             </div>

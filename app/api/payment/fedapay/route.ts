@@ -3,15 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { addCredits } from "@/lib/credits";
 import { db, creditTransactions } from "@/lib/db";
 import { eq } from "drizzle-orm";
-import { createFedapayPayment } from "@/lib/fedapay";
-
-// Credit bundles with prices in FCFA
-export const CREDIT_BUNDLES = [
-  { credits: 100, priceFCFA: 5000, label: "Découverte" },
-  { credits: 500, priceFCFA: 20000, label: "Croissance", popular: true },
-  { credits: 2000, priceFCFA: 70000, label: "Scale" },
-  { credits: 5000, priceFCFA: 150000, label: "Entreprise" },
-];
+import { createFedapayPayment, CREDIT_BUNDLES } from "@/lib/fedapay";
 
 // POST: Initiate a credit purchase via Fedapay
 export async function POST(req: NextRequest) {
@@ -31,7 +23,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Check if Fedapay is configured
-    if (!process.env.FEDAPAY_API_KEY) {
+    if (!process.env.FEDAPAY_SECRET_KEY) {
       // Development mode — add credits directly (no payment)
       if (process.env.NODE_ENV === "development") {
         const newBalance = await addCredits(
@@ -90,6 +82,6 @@ export async function GET() {
   return NextResponse.json({
     bundles: CREDIT_BUNDLES,
     fedapayPublicKey: process.env.FEDAPAY_PUBLIC_KEY || null,
-    isConfigured: !!process.env.FEDAPAY_API_KEY,
+    isConfigured: !!process.env.FEDAPAY_SECRET_KEY,
   });
 }

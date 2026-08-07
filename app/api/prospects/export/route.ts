@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { db, prospects } from "@/lib/db";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 
 // GET: Export prospects as CSV
 export async function GET(req: NextRequest) {
@@ -16,8 +16,6 @@ export async function GET(req: NextRequest) {
 
     let query = db.select().from(prospects).where(eq(prospects.userId, user.id));
     if (campaignId) {
-      // Re-query with campaign filter
-      const { and } = await import("drizzle-orm");
       query = db.select().from(prospects).where(
         and(eq(prospects.userId, user.id), eq(prospects.campaignId, parseInt(campaignId)))
       );
@@ -29,7 +27,6 @@ export async function GET(req: NextRequest) {
     const headers = ["Nom", "Email", "Entreprise", "Téléphone", "LinkedIn", "Score", "Statut", "Source", "Créé le"];
 
     const rows = userProspects.map((p) => {
-      const data = p.data as Record<string, any> | null;
       return [
         p.name,
         p.email || "",
@@ -43,12 +40,17 @@ export async function GET(req: NextRequest) {
       ];
     });
 
-    // Escape CSV values (wrap in quotes if contains comma or quote)
+    // Escape CSV values — prevent formula injection (=, +, -, @ at start of cell)
     const escapeCSV = (val: string) => {
-      if (val.includes(",") || val.includes('"') || val.includes("\n")) {
-        return `"${val.replace(/"/g, '""')}"`;
+      // Prevent CSV formula injection
+      let safe = val;
+      if (/^[=+\-@]/.test(safe)) {
+        safe = `'${safe}`;
       }
-      return val;
+      if (safe.includes(",") || safe.includes('"') || safe.includes("\n")) {
+        return `"${safe.replace(/"/g, '""')}"`;
+      }
+      return safe;
     };
 
     const csv = [

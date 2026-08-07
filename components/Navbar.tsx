@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { Zap, Menu, X, Coins, LogOut, User, BarChart3, Target, Users, Settings } from "lucide-react";
-import { useState, useEffect } from "react";
+import { Zap, Menu, X, Coins, LogOut, BarChart3, Target, Users, Settings } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
 export default function Navbar() {
@@ -10,6 +10,7 @@ export default function Navbar() {
   const [user, setUser] = useState<{ email: string; fullName: string | null } | null>(null);
   const [balance, setBalance] = useState<number | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
   const router = useRouter();
 
@@ -25,10 +26,22 @@ export default function Navbar() {
       .catch(() => {});
   }, [pathname]);
 
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   const logout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
     setUser(null);
     setBalance(null);
+    setMenuOpen(false);
     router.push("/");
     router.refresh();
   };
@@ -92,7 +105,7 @@ export default function Navbar() {
                 </Link>
 
                 {/* User menu */}
-                <div className="relative">
+                <div className="relative" ref={menuRef}>
                   <button
                     onClick={() => setMenuOpen(!menuOpen)}
                     className="w-9 h-9 rounded-lg bg-gradient-to-br from-brand-500 to-purple-600 flex items-center justify-center text-white text-sm font-bold"
@@ -105,13 +118,13 @@ export default function Navbar() {
                         <p className="text-sm font-medium text-slate-900 truncate">{user.fullName || user.email}</p>
                         <p className="text-xs text-slate-400 truncate">{user.email}</p>
                       </div>
-                      <Link href="/prospects" className="w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition">
+                      <Link href="/prospects" className="w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition" onClick={() => setMenuOpen(false)}>
                         <Users className="w-4 h-4 text-slate-400" /> Prospects
                       </Link>
-                      <Link href="/analytics" className="w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition">
+                      <Link href="/analytics" className="w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition" onClick={() => setMenuOpen(false)}>
                         <BarChart3 className="w-4 h-4 text-slate-400" /> Analytics
                       </Link>
-                      <Link href="/settings" className="w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition">
+                      <Link href="/settings" className="w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition" onClick={() => setMenuOpen(false)}>
                         <Settings className="w-4 h-4 text-slate-400" /> Paramètres
                       </Link>
                       <button

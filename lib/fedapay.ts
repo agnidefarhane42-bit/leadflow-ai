@@ -3,8 +3,16 @@
 // Fedapay supports Mobile Money (MTN, Moov, Orange), card, and bank transfer
 
 const FEDAPAY_API_URL = process.env.FEDAPAY_API_URL || "https://api.fedapay.com/v1";
-const FEDAPAY_API_KEY = process.env.FEDAPAY_API_KEY;
+const FEDAPAY_SECRET_KEY = process.env.FEDAPAY_SECRET_KEY;
 const FEDAPAY_PUBLIC_KEY = process.env.FEDAPAY_PUBLIC_KEY;
+
+// Credit bundles with prices in FCFA
+export const CREDIT_BUNDLES = [
+  { credits: 100, priceFCFA: 5000, label: "Découverte" },
+  { credits: 500, priceFCFA: 20000, label: "Croissance", popular: true },
+  { credits: 2000, priceFCFA: 70000, label: "Scale" },
+  { credits: 5000, priceFCFA: 150000, label: "Entreprise" },
+];
 
 interface CreatePaymentParams {
   amount: number; // In FCFA
@@ -34,8 +42,8 @@ export async function createFedapayPayment({
   userEmail,
   userName,
 }: CreatePaymentParams): Promise<{ checkoutUrl: string; transactionId: string; reference: string }> {
-  if (!FEDAPAY_API_KEY) {
-    throw new Error("FEDAPAY_API_KEY is not set");
+  if (!FEDAPAY_SECRET_KEY) {
+    throw new Error("FEDAPAY_SECRET_KEY is not set");
   }
 
   const reference = `LF-${userId}-${Date.now()}`;
@@ -45,7 +53,7 @@ export async function createFedapayPayment({
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${FEDAPAY_API_KEY}`,
+      Authorization: `Bearer ${FEDAPAY_SECRET_KEY}`,
     },
     body: JSON.stringify({
       transaction: {
@@ -81,7 +89,7 @@ export async function createFedapayPayment({
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${FEDAPAY_API_KEY}`,
+      Authorization: `Bearer ${FEDAPAY_SECRET_KEY}`,
     },
     body: JSON.stringify({
       token: {
@@ -122,13 +130,13 @@ export async function verifyFedapayTransaction(transactionId: string): Promise<{
     reference: string;
   };
 }> {
-  if (!FEDAPAY_API_KEY) {
-    throw new Error("FEDAPAY_API_KEY is not set");
+  if (!FEDAPAY_SECRET_KEY) {
+    throw new Error("FEDAPAY_SECRET_KEY is not set");
   }
 
   const response = await fetch(`${FEDAPAY_API_URL}/transactions/${transactionId}`, {
     headers: {
-      Authorization: `Bearer ${FEDAPAY_API_KEY}`,
+      Authorization: `Bearer ${FEDAPAY_SECRET_KEY}`,
     },
   });
 

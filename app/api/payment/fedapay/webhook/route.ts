@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db, creditTransactions, creditBalances } from "@/lib/db";
-import { eq, sql } from "drizzle-orm";
+import { db, creditTransactions } from "@/lib/db";
+import { eq } from "drizzle-orm";
 import { addCredits } from "@/lib/credits";
 import { verifyFedapayTransaction } from "@/lib/fedapay";
 
 // Fedapay webhook — called when payment status changes
+// SECURITY: Always verify the transaction with FedaPay API before crediting.
+// Never trust the webhook payload directly.
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -19,20 +21,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No transaction ID" }, { status: 400 });
     }
 
-    // Verify the transaction with Fedapay API
+    // Always verify the transaction with Fedapay API — never trust the webhook payload
     let verified;
     try {
       verified = await verifyFedapayTransaction(transactionId);
     } catch {
-      // If verification fails, try to process from webhook data
-      const status = transaction.status || event.status;
-      const metadata = transaction.metadata || event.metadata || {};
-
-      if (status !== "approved" && status !== "completed") {
-        return NextResponse.json({ received: true, status: "not_approved" });
-      }
-
-      return await processPayment(metadata, transactionId);
+      // If verification fails, do NOT credit the user. Log and return.
+      console.error("Fedapay webhook: verification failed for transaction", transactionId);
+      return NextResponse.json({ error: "Verification failed" }, { status: 403 });
     }
 
     // Only process approved payments
