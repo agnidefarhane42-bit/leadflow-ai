@@ -18,13 +18,14 @@ export async function POST(req: NextRequest) {
 
     const user = result.user;
 
-    // Set session cookie
+    // Set session cookie (include role — new users are "user" by default)
     await setSessionCookie({
       id: user.id,
       email: user.email,
       fullName: user.fullName,
       company: user.company,
       plan: user.plan,
+      role: user.role || "user",
     });
 
     return NextResponse.json({ success: true, user: { id: user.id, email: user.email } });
