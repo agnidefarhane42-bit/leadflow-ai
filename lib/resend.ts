@@ -3,7 +3,9 @@
 // Free tier: 3000 emails/month, 100 emails/day
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const FROM_EMAIL = process.env.FROM_EMAIL || "outreach@leadflow.ai";
+// Default to onboarding@resend.dev (works without domain verification)
+// To use a custom domain, verify it on https://resend.com/domains and set FROM_EMAIL env var
+const FROM_EMAIL = process.env.FROM_EMAIL || "onboarding@resend.dev";
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
 interface SendEmailParams {
@@ -50,12 +52,14 @@ export async function sendEmail({ to, subject, htmlContent, textContent, replyTo
 
     if (!response.ok) {
       const error = await response.text();
+      console.error(`[RESEND ERROR] ${response.status}: ${error}`);
       return { success: false, error: `Resend error (${response.status}): ${error}` };
     }
 
     const data = await response.json();
     return { success: true, messageId: data.id };
   } catch (error) {
+    console.error("[RESEND EXCEPTION]", error);
     return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
   }
 }
