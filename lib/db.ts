@@ -77,7 +77,7 @@ export const creditTransactions = pgTable("credit_transactions", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   amount: integer("amount").notNull(),
-  type: varchar("type", { length: 50 }).notNull(), // signup_bonus, purchase, agent_run, refund
+  type: varchar("type", { length: 50 }).notNull(),
   description: varchar("description", { length: 500 }),
   referenceId: varchar("reference_id", { length: 255 }),
   createdAt: timestamp("created_at").defaultNow(),
@@ -108,7 +108,7 @@ export const agentRuns = pgTable("agent_runs", {
   input: jsonb("input"),
   output: jsonb("output"),
   creditsConsumed: integer("credits_consumed").notNull().default(0),
-  status: varchar("status", { length: 20 }).default("pending"), // pending, running, completed, failed
+  status: varchar("status", { length: 20 }).default("pending"),
   error: text("error"),
   createdAt: timestamp("created_at").defaultNow(),
   completedAt: timestamp("completed_at"),
@@ -125,6 +125,7 @@ export const campaigns = pgTable("campaigns", {
   agentId: integer("agent_id").references(() => agents.id),
   status: varchar("status", { length: 20 }).default("draft"),
   targetCriteria: jsonb("target_criteria"),
+  offerDescription: text("offer_description"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -150,10 +151,10 @@ export const outreachMessages = pgTable("outreach_messages", {
   id: serial("id").primaryKey(),
   prospectId: integer("prospect_id").notNull().references(() => prospects.id, { onDelete: "cascade" }),
   userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  type: varchar("type", { length: 50 }).default("email"), // email, linkedin, twitter
+  type: varchar("type", { length: 50 }).default("email"),
   subject: varchar("subject", { length: 500 }),
   content: text("content").notNull(),
-  status: varchar("status", { length: 20 }).default("draft"), // draft, sent, replied, bounced
+  status: varchar("status", { length: 20 }).default("draft"),
   sentAt: timestamp("sent_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });

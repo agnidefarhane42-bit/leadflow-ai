@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { name, agentId, targetCriteria } = body;
+    const { name, agentId, targetCriteria, offerDescription } = body;
 
     if (!name) {
       return NextResponse.json({ error: "Nom de campagne requis" }, { status: 400 });
@@ -65,6 +65,7 @@ export async function POST(req: NextRequest) {
         name,
         agentId: agentId || null,
         targetCriteria: targetCriteria || null,
+        offerDescription: offerDescription || null,
         status: "draft",
       })
       .returning();

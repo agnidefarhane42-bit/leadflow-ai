@@ -10,6 +10,7 @@ interface Campaign {
   status: string;
   agentId: number | null;
   targetCriteria: any;
+  offerDescription: string | null;
   prospectCount: number;
   createdAt: string;
 }
@@ -36,6 +37,7 @@ export default function CampaignsPage() {
   const [newCampaign, setNewCampaign] = useState({
     name: "",
     agentId: "",
+    offerDescription: "",
     industry: "",
     location: "",
     companySize: "",
@@ -74,12 +76,13 @@ export default function CampaignsPage() {
           name: newCampaign.name,
           agentId: newCampaign.agentId ? parseInt(newCampaign.agentId) : null,
           targetCriteria: Object.keys(targetCriteria).length > 0 ? targetCriteria : null,
+          offerDescription: newCampaign.offerDescription || null,
         }),
       });
       const data = await res.json();
       if (data.success) {
         setShowCreate(false);
-        setNewCampaign({ name: "", agentId: "", industry: "", location: "", companySize: "", role: "" });
+        setNewCampaign({ name: "", agentId: "", offerDescription: "", industry: "", location: "", companySize: "", role: "" });
         fetchCampaigns();
       }
     } catch {
@@ -163,6 +166,10 @@ export default function CampaignsPage() {
                     </h3>
                   </Link>
 
+                  {camp.offerDescription && (
+                    <p className="text-sm text-slate-500 mb-3 line-clamp-2">{camp.offerDescription}</p>
+                  )}
+
                   {camp.targetCriteria && (
                     <div className="flex flex-wrap gap-1.5 mb-4">
                       {Object.entries(camp.targetCriteria).slice(0, 3).map(([key, value]: [string, any]) => (
@@ -213,6 +220,22 @@ export default function CampaignsPage() {
                     placeholder="Ex: Prospection fintech Afrique de l'Ouest"
                     className="w-full px-4 py-2.5 rounded-lg border border-slate-200 focus:border-brand-400 focus:ring-2 focus:ring-brand-100 outline-none transition"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                    Que vendez-vous ? <span className="text-slate-400 font-normal">(décrivez votre offre)</span>
+                  </label>
+                  <textarea
+                    value={newCampaign.offerDescription}
+                    onChange={(e) => setNewCampaign({ ...newCampaign, offerDescription: e.target.value })}
+                    rows={3}
+                    placeholder="Ex: Nous proposons un service de automatisation marketing par IA pour les PME. Notre solution permet de générer des leads qualifiés automatiquement et d'envoyer des emails personnalisés sans effort."
+                    className="w-full px-4 py-2.5 rounded-lg border border-slate-200 focus:border-brand-400 focus:ring-2 focus:ring-brand-100 outline-none transition resize-none"
+                  />
+                  <p className="text-xs text-slate-400 mt-1">
+                    Cette description sera utilisée par l'IA pour personnaliser les emails de prospection.
+                  </p>
                 </div>
 
                 <div className="border-t border-slate-100 pt-4">
