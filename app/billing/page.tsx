@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Coins, Loader2, CheckCircle, Clock, ArrowDown, ArrowUp } from "lucide-react";
+import { Coins, Loader2, CheckCircle, ArrowDown, ArrowUp, Shield, Smartphone, CreditCard } from "lucide-react";
 
 interface Transaction {
   id: number;
@@ -12,10 +12,10 @@ interface Transaction {
 }
 
 const CREDIT_BUNDLES = [
-  { credits: 100, price: "5 000", priceUSD: "~8", popular: false },
-  { credits: 500, price: "20 000", priceUSD: "~32", popular: true },
-  { credits: 2000, price: "70 000", priceUSD: "~110", popular: false },
-  { credits: 5000, price: "150 000", priceUSD: "~240", popular: false },
+  { credits: 100, price: "5 000", priceUSD: "~8", popular: false, label: "Découverte" },
+  { credits: 500, price: "20 000", priceUSD: "~32", popular: true, label: "Croissance" },
+  { credits: 2000, price: "70 000", priceUSD: "~110", popular: false, label: "Scale" },
+  { credits: 5000, price: "150 000", priceUSD: "~240", popular: false, label: "Entreprise" },
 ];
 
 const TYPE_LABELS: Record<string, string> = {
@@ -30,9 +30,21 @@ export default function BillingPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [purchasing, setPurchasing] = useState<number | null>(null);
+  const [isConfigured, setIsConfigured] = useState(false);
+  const [paymentStatus, setPaymentStatus] = useState<string | null>(null);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     fetchData();
+    checkConfig();
+    // Check URL for payment return status
+    const params = new URLSearchParams(window.location.search);
+    const status = params.get("status");
+    if (status) {
+      setPaymentStatus(status);
+      // Clean URL
+      window.history.replaceState({}, "", "/billing");
+    }
   }, []);
 
   const fetchData = async () => {
@@ -48,12 +60,44 @@ export default function BillingPage() {
     }
   };
 
+  const checkConfig = async () => {
+    try {
+      const res = await fetch("/api/payment/fedapay");
+      const data = await res.json();
+      setIsConfigured(data.isConfigured || false);
+    } catch {
+      // silent
+    }
+  };
+
   const handlePurchase = async (credits: number) => {
     setPurchasing(credits);
-    // TODO: Integrate Fedapay/Paystack here
-    // For now, show a message that payment integration is coming
-    alert(`Paiement de ${credits} crédits — L'intégration Fedapay/Paystack sera configurée bientôt. Restez connecté !`);
-    setPurchasing(null);
+    setError("");
+
+    try {
+      const res = await fetch("/api/payment/fedapay", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credits }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || "Erreur lors du paiement");
+      } else if (data.mode === "development") {
+        // Dev mode — credits added directly
+        setBalance(data.balance);
+        fetchData();
+        setPaymentStatus("success_dev");
+      } else if (data.checkoutUrl) {
+        // Redirect to Fedapay checkout
+        window.location.href = data.checkoutUrl;
+      }
+    } catch {
+      setError("Une erreur est survenue");
+    } finally {
+      setPurchasing(null);
+    }
   };
 
   if (loading) {
@@ -73,8 +117,33 @@ export default function BillingPage() {
           <p className="text-slate-500">Gérez votre solde de crédits et votre historique</p>
         </div>
 
+        {/* Payment status notifications */}
+        {paymentStatus === "success_dev" && (
+          <div className="mb-6 flex items-center gap-2 px-4 py-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm">
+            <CheckCircle className="w-4 h-4 flex-shrink-0" />
+            Crédits ajoutés avec succès (mode développement) !
+          </div>
+        )}
+        {paymentStatus === "success" && (
+          <div className="mb-6 flex items-center gap-2 px-4 py-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm">
+            <CheckCircle className="w-4 h-4 flex-shrink-0" />
+            Paiement confirmé ! Vos crédits ont été ajoutés.
+          </div>
+        )}
+        {paymentStatus === "pending" && (
+          <div className="mb-6 flex items-center gap-2 px-4 py-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm">
+            <Loader2 className="w-4 h-4 flex-shrink-0" />
+            Paiement en cours de traitement...
+          </div>
+        )}
+        {error && (
+          <div className="mb-6 px-4 py-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
+            {error}
+          </div>
+        )}
+
         {/* Current balance */}
-        <div className="glass-card rounded-2xl p-6 mb-8 flex items-center justify-between">
+        <div className="bg-white rounded-2xl border border-slate-100 p-6 mb-8 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center">
               <Coins className="w-7 h-7 text-white" />
@@ -91,7 +160,7 @@ export default function BillingPage() {
 
         {/* Credit bundles */}
         <h2 className="text-xl font-bold mb-4">Acheter des crédits</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-12">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           {CREDIT_BUNDLES.map((bundle) => (
             <div
               key={bundle.credits}
@@ -103,10 +172,11 @@ export default function BillingPage() {
             >
               {bundle.popular && (
                 <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-white text-brand-600 text-xs font-bold">
-                  Meilleure offre
+                  Populaire
                 </div>
               )}
               <div className="text-center">
+                <div className="text-sm font-medium mb-1 opacity-80">{bundle.label}</div>
                 <Coins className={`w-8 h-8 mx-auto mb-3 ${bundle.popular ? "text-amber-300" : "text-amber-500"}`} />
                 <div className="text-3xl font-extrabold mb-1">{bundle.credits}</div>
                 <p className={`text-sm mb-4 ${bundle.popular ? "text-brand-100" : "text-slate-500"}`}>crédits</p>
@@ -136,10 +206,20 @@ export default function BillingPage() {
           ))}
         </div>
 
-        {/* Payment info */}
-        <div className="mb-8 p-4 rounded-xl bg-blue-50 border border-blue-200 text-sm text-blue-700">
-          💡 Le paiement via <strong>Fedapay</strong> ou <strong>Paystack</strong> sera bientôt disponible.
-          Vous pourrez acheter des crédits avec Mobile Money (MTN, Moov, Orange), carte bancaire, et plus encore.
+        {/* Payment methods info */}
+        <div className="mb-8 p-4 rounded-xl bg-blue-50 border border-blue-200">
+          <div className="flex items-center gap-3 mb-2">
+            <Shield className="w-5 h-5 text-blue-600" />
+            <span className="font-medium text-blue-700 text-sm">Paiement sécurisé via Fedapay</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-4 text-sm text-blue-600 ml-8">
+            <span className="flex items-center gap-1.5">
+              <Smartphone className="w-4 h-4" /> Mobile Money (MTN, Moov, Orange)
+            </span>
+            <span className="flex items-center gap-1.5">
+              <CreditCard className="w-4 h-4" /> Carte bancaire (Visa, Mastercard)
+            </span>
+          </div>
         </div>
 
         {/* Transaction history */}
