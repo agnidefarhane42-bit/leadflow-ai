@@ -648,7 +648,7 @@ async function runGenerateStep(userId: number, campaignId: number, agent: any, o
       return `${i + 1}. ${p.name}${p.company ? " | " + p.company : ""}${d?.role ? " | " + d.role : ""}${d?.fitReason ? " | " + d.fitReason : ""}`;
     }).join("\n");
 
-    const userMessage = `Tu écris au nom de "${userCompany}".\nOffre:\n${offerDesc}\n\nGénère un email B2B pour chacun de ces ${toGenerate.length} prospects.\n\n${prospectInfo}\n\nJSON:\n\`\`\`json\n{"emails": [{"name": "Nom", "subject": "Sujet", "body": "Corps (max 120 mots)"}]}\n\`\`\``;
+    const userMessage = `Tu écris au nom de "${userCompany}".\nOffre:\n${offerDesc}\n\nGénère un email B2B PERSONNALISÉ pour chacun de ces ${toGenerate.length} prospects.\n\nIMPORTANT: Utilise le VRAI prénom du prospect dans l'email (ex: "Bonjour Koffi," pas "Bonjour [Prénom]"). N'utilise JAMAIS de placeholders comme [Prénom], [Nom], [Votre Prénom].\n\n${prospectInfo}\n\nJSON:\n\`\`\`json\n{"emails": [{"name": "Nom du prospect", "subject": "Sujet", "body": "Corps (max 120 mots) avec le vrai prénom"}]}\n\`\`\``;
     const result = await callMistral(agent.systemPrompt, userMessage, { temperature: 0.7, maxTokens: 3000 });
     const parsed = parseAIResponse(result.content);
 
@@ -662,10 +662,26 @@ async function runGenerateStep(userId: number, campaignId: number, agent: any, o
       for (const email of parsed.json.emails) {
         const prospect = toGenerate.find((p) => p.name === email.name);
         if (prospect) {
+          // Extract first name and clean up any remaining placeholders
+          const firstName = prospect.name.split(" ")[0] || prospect.name;
+          let body = email.body || "";
+          let subject = email.subject || "Contact professionnel";
+          
+          // Replace any remaining placeholders with actual name
+          body = body.replace(/\[Prénom\]/gi, firstName)
+                      .replace(/\[Nom\]/gi, prospect.name)
+                      .replace(/\[Votre Prénom\]/gi, userCompany)
+                      .replace(/\[Prénom du prospect\]/gi, firstName)
+                      .replace(/\[Entreprise\]/gi, prospect.company || "")
+                      .replace(/\[Company\]/gi, prospect.company || "");
+          subject = subject.replace(/\[Prénom\]/gi, firstName)
+                          .replace(/\[Nom\]/gi, prospect.name)
+                          .replace(/\[Entreprise\]/gi, prospect.company || "")
+                          .replace(/\[Company\]/gi, prospect.company || "");
+          
           await db.insert(outreachMessages).values({
             prospectId: prospect.id, userId, type: "email",
-            subject: email.subject || "Contact professionnel",
-            content: email.body || "", status: "draft",
+            subject, content: body, status: "draft",
           });
           generatedCount++;
         }
