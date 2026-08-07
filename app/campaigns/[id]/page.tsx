@@ -4,8 +4,9 @@ import { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
-  ArrowLeft, Loader2, Sparkles, Users, Target, Mail, Linkedin, Coins,
-  Plus, Trash2, Search, CheckCircle2, Circle, Send, AlertCircle, Zap, ChevronRight,
+  ArrowLeft, Loader2, Sparkles, Users, Target, Mail,
+  Plus, Trash2, Search, CheckCircle2, Circle, Send, AlertCircle, Zap,
+  ChevronRight, User, Building2, TrendingUp, Flame, Clock, X,
 } from "lucide-react";
 
 interface Campaign {
@@ -53,9 +54,9 @@ interface CampaignStats {
 }
 
 const PIPELINE_STEPS = [
-  { key: "find", label: "Lead Finder", description: "Vrais prospects via Apollo.io", icon: Search, credits: 5 },
+  { key: "find", label: "Lead Finder", description: "Vrais prospects via IA + scraping", icon: Search, credits: 5 },
   { key: "qualify", label: "Qualification", description: "Scoring IA (hot/warm/cold)", icon: Target, credits: 3 },
-  { key: "enrich", label: "Email Reveal", description: "Révélation des vrais emails via Apollo", icon: Mail, credits: 0 },
+  { key: "enrich", label: "Email Reveal", description: "Révélation des vrais emails", icon: Mail, credits: 0 },
   { key: "generate", label: "Rédaction", description: "Création des emails personnalisés", icon: Sparkles, credits: 2 },
   { key: "send", label: "Envoi", description: "Envoi via Gmail", icon: Send, credits: 0 },
 ];
@@ -77,30 +78,25 @@ export default function CampaignDetailPage() {
   const [stepResults, setStepResults] = useState<Record<string, any>>({});
   const [pipelineError, setPipelineError] = useState("");
 
-  // Manual prospect modal
+  // UI state
+  const [activeTab, setActiveTab] = useState<"prospects" | "emails">("prospects");
   const [showManual, setShowManual] = useState(false);
   const [manualProspect, setManualProspect] = useState({ name: "", email: "", company: "" });
-
-  // Send all state
   const [sending, setSending] = useState(false);
+  const [expandedEmail, setExpandedEmail] = useState<number | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
-      // Only fetch campaign detail (no GET on /run which only supports POST)
       const campRes = await fetch(`/api/campaigns/${campaignId}`);
-
       if (!campRes.ok) {
         if (campRes.status === 404) setNotFound(true);
         setLoading(false);
         return;
       }
-
       const campData = await campRes.json();
-
       setCampaign(campData.campaign);
       setProspects(campData.prospects || []);
 
-      // Fetch messages for this campaign's prospects
       const prospectIds = (campData.prospects || []).map((p: Prospect) => p.id);
       let campaignMessages: OutreachMessage[] = [];
       if (prospectIds.length > 0) {
@@ -112,7 +108,6 @@ export default function CampaignDetailPage() {
       }
       setMessages(campaignMessages);
 
-      // Compute stats from the data we already have
       const allProspects: Prospect[] = campData.prospects || [];
       const computedStats: CampaignStats = {
         totalProspects: allProspects.length,
@@ -129,7 +124,7 @@ export default function CampaignDetailPage() {
       };
       setStats(computedStats);
     } catch {
-      // If something fails, don't show "not found" — might be a network error
+      // silent
     } finally {
       setLoading(false);
     }
@@ -139,11 +134,9 @@ export default function CampaignDetailPage() {
     fetchData();
   }, [fetchData]);
 
-  // Run a single step
   const runStep = async (step: string) => {
     setPipelineError("");
     setCurrentStep(step);
-
     try {
       const res = await fetch(`/api/campaigns/${campaignId}/run`, {
         method: "POST",
@@ -151,13 +144,11 @@ export default function CampaignDetailPage() {
         body: JSON.stringify({ step }),
       });
       const data = await res.json();
-
       if (!res.ok) {
         setPipelineError(data.error || "Erreur lors de l'exécution");
         setCurrentStep(null);
         return null;
       }
-
       setStepResults((prev) => ({ ...prev, [step]: data }));
       await fetchData();
       return data;
@@ -168,33 +159,22 @@ export default function CampaignDetailPage() {
     }
   };
 
-  // Run full pipeline: find → qualify → enrich → generate (no auto-send)
   const runFullPipeline = async () => {
     setRunning(true);
     setPipelineError("");
     setStepResults({});
-
-    // Step 1: Find (Apollo real prospects)
     const findResult = await runStep("find");
     if (!findResult) { setRunning(false); setCurrentStep(null); return; }
-
-    // Step 2: Qualify
     const qualifyResult = await runStep("qualify");
     if (!qualifyResult) { setRunning(false); setCurrentStep(null); return; }
-
-    // Step 3: Enrich (reveal real emails)
     const enrichResult = await runStep("enrich");
     if (!enrichResult) { setRunning(false); setCurrentStep(null); return; }
-
-    // Step 4: Generate emails
     const genResult = await runStep("generate");
     if (!genResult) { setRunning(false); setCurrentStep(null); return; }
-
     setRunning(false);
     setCurrentStep(null);
   };
 
-  // Send all draft messages
   const sendAll = async () => {
     setSending(true);
     try {
@@ -216,7 +196,6 @@ export default function CampaignDetailPage() {
     }
   };
 
-  // Send a single message
   const sendMessage = async (messageId: number) => {
     try {
       const res = await fetch("/api/outreach/send", {
@@ -225,12 +204,8 @@ export default function CampaignDetailPage() {
         body: JSON.stringify({ messageId }),
       });
       const data = await res.json();
-      if (data.success) {
-        await fetchData();
-      }
-    } catch {
-      // silent
-    }
+      if (data.success) await fetchData();
+    } catch {}
   };
 
   const addManualProspect = async (e: React.FormEvent) => {
@@ -250,9 +225,7 @@ export default function CampaignDetailPage() {
       setShowManual(false);
       setManualProspect({ name: "", email: "", company: "" });
       fetchData();
-    } catch {
-      // silent
-    }
+    } catch {}
   };
 
   const deleteProspect = async (id: number) => {
@@ -263,7 +236,10 @@ export default function CampaignDetailPage() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center pt-20">
-        <Loader2 className="w-8 h-8 text-brand-500 animate-spin" />
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 rounded-full border-2 border-brand-200 border-t-brand-500 animate-spin" />
+          <p className="text-sm text-slate-400">Chargement…</p>
+        </div>
       </div>
     );
   }
@@ -283,6 +259,30 @@ export default function CampaignDetailPage() {
     return "pending";
   };
 
+  const scoreColor = (score: number) => {
+    if (score >= 70) return "text-emerald-600 bg-emerald-50";
+    if (score >= 40) return "text-amber-600 bg-amber-50";
+    return "text-slate-400 bg-slate-50";
+  };
+
+  const msgStatusBadge = (status: string) => {
+    switch (status) {
+      case "sent": return "bg-emerald-50 text-emerald-700 ring-emerald-200";
+      case "bounced": return "bg-red-50 text-red-700 ring-red-200";
+      case "draft": return "bg-slate-50 text-slate-500 ring-slate-200";
+      default: return "bg-slate-50 text-slate-500 ring-slate-200";
+    }
+  };
+
+  const msgStatusLabel = (status: string) => {
+    switch (status) {
+      case "sent": return "Envoyé";
+      case "bounced": return "Échec";
+      case "draft": return "Brouillon";
+      default: return status;
+    }
+  };
+
   return (
     <div className="min-h-screen pt-24 pb-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-7xl mx-auto">
@@ -293,121 +293,82 @@ export default function CampaignDetailPage() {
         </Link>
 
         {/* Campaign header */}
-        <div className="flex items-start justify-between mb-8">
-          <div>
-            <h1 className="text-3xl font-bold mb-2">{campaign.name}</h1>
+        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4 mb-8">
+          <div className="flex-1">
+            <h1 className="text-2xl font-bold tracking-tight mb-2">{campaign.name}</h1>
             {campaign.offerDescription && (
-              <p className="text-slate-500 mb-3 max-w-2xl">{campaign.offerDescription}</p>
+              <p className="text-slate-500 text-sm max-w-2xl leading-relaxed">{campaign.offerDescription}</p>
             )}
             {campaign.targetCriteria && Object.keys(campaign.targetCriteria).length > 0 && (
-              <div className="flex flex-wrap gap-2 mt-2">
+              <div className="flex flex-wrap gap-2 mt-3">
                 {Object.entries(campaign.targetCriteria).map(([key, value]: [string, any]) => (
-                  <span key={key} className="px-3 py-1 rounded-lg bg-slate-50 text-slate-600 text-sm">
-                    <span className="font-medium text-slate-400">{key}:</span> {String(value)}
+                  <span key={key} className="px-2.5 py-0.5 rounded-md bg-slate-50 text-slate-500 text-xs border border-slate-100">
+                    {key}: <span className="font-medium text-slate-600">{value}</span>
                   </span>
                 ))}
               </div>
             )}
           </div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setShowManual(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-white border border-slate-200 text-slate-700 font-medium hover:border-brand-300 transition"
-            >
-              <Plus className="w-4 h-4" />
-              Ajouter prospect
-            </button>
-          </div>
         </div>
 
-        {/* PIPELINE — The main feature */}
-        <div className="glass-card rounded-3xl p-8 mb-8">
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h2 className="text-xl font-bold flex items-center gap-2">
-                <Zap className="w-5 h-5 text-brand-500" />
-                Pipeline d'automatisation
-              </h2>
-              <p className="text-sm text-slate-500 mt-1">Lance le pipeline complet : Lead Finder → Qualification → Emails → Envoi</p>
-            </div>
+        {/* Pipeline */}
+        <div className="mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-wide">Pipeline IA</h2>
             <button
               onClick={runFullPipeline}
               disabled={running}
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-brand-500 to-purple-600 text-white font-semibold hover:shadow-lg hover:shadow-brand-500/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-brand-500 text-white font-semibold text-sm hover:bg-brand-600 transition-all shadow-sm hover:shadow-md active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {running ? (
                 <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  Pipeline en cours...
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Traitement…
                 </>
               ) : (
                 <>
-                  <Sparkles className="w-5 h-5" />
+                  <Zap className="w-4 h-4" />
                   Lancer le pipeline
                 </>
               )}
             </button>
           </div>
 
-          {/* Pipeline steps visual */}
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-            {PIPELINE_STEPS.map((step, i) => {
+          {/* Pipeline steps */}
+          <div className="flex items-center gap-1 sm:gap-2 overflow-x-auto pb-2">
+            {PIPELINE_STEPS.map((step, idx) => {
               const state = getStepState(step.key);
-              const Icon = step.icon;
-              const result = stepResults[step.key];
-
+              const StepIcon = step.icon;
               return (
-                <div key={step.key} className="relative">
-                  {/* Connector line */}
-                  {i < PIPELINE_STEPS.length - 1 && (
-                    <div className="hidden md:block absolute top-6 -right-3 w-6 h-0.5 bg-slate-200">
-                      {state === "done" && <div className="w-full h-full bg-emerald-500" />}
-                    </div>
-                  )}
-
+                <div key={step.key} className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
                   <div
-                    className={`rounded-2xl p-5 border transition-all ${
+                    className={`flex items-center gap-2.5 px-3 sm:px-4 py-2.5 rounded-xl border transition-all ${
                       state === "running"
-                        ? "border-brand-400 bg-brand-50 shadow-lg shadow-brand-500/10"
+                        ? "border-brand-400 bg-brand-50 ring-2 ring-brand-100"
                         : state === "done"
                         ? "border-emerald-200 bg-emerald-50"
                         : "border-slate-100 bg-white"
                     }`}
                   >
-                    <div className="flex items-center justify-between mb-3">
-                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition ${
-                        state === "running" ? "bg-brand-500" : state === "done" ? "bg-emerald-500" : "bg-slate-100"
-                      }`}>
-                        {state === "running" ? (
-                          <Loader2 className="w-5 h-5 text-white animate-spin" />
-                        ) : state === "done" ? (
-                          <CheckCircle2 className="w-5 h-5 text-white" />
-                        ) : (
-                          <Icon className="w-5 h-5 text-slate-400" />
-                        )}
-                      </div>
-                      <span className="text-xs font-medium text-slate-400">Étape {i + 1}</span>
+                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+                      state === "running" ? "bg-brand-500 text-white" : state === "done" ? "bg-emerald-500 text-white" : "bg-slate-100 text-slate-400"
+                    }`}>
+                      {state === "done" ? <CheckCircle2 className="w-4 h-4" /> : state === "running" ? <Loader2 className="w-4 h-4 animate-spin" /> : <StepIcon className="w-4 h-4" />}
                     </div>
-
-                    <h3 className="font-bold text-sm mb-1">{step.label}</h3>
-                    <p className="text-xs text-slate-500 mb-2">{step.description}</p>
-
-                    <div className="flex items-center justify-between">
-                      <span className="inline-flex items-center gap-1 text-xs text-amber-600 font-medium">
-                        <Coins className="w-3 h-3" />
-                        {step.credits} crédits
-                      </span>
-                      {result && (
-                        <span className="text-xs font-semibold text-emerald-600">
-                          {result.prospectsCreated ? `${result.prospectsCreated} prospects` :
-                           result.qualified !== undefined ? `${result.qualified} qualifiés` :
-                           result.enriched !== undefined ? `${result.enriched} emails` :
-                           result.messagesGenerated ? `${result.messagesGenerated} emails` :
-                           result.sent !== undefined ? `${result.sent} envoyés` : "✓"}
-                        </span>
-                      )}
+                    <div className="hidden sm:block">
+                      <p className={`text-sm font-semibold ${state === "pending" ? "text-slate-400" : "text-slate-700"}`}>{step.label}</p>
+                      <p className="text-xs text-slate-400">{step.description}</p>
                     </div>
+                    <div className="sm:hidden">
+                      <p className={`text-xs font-semibold ${state === "pending" ? "text-slate-400" : "text-slate-700"}`}>{step.label}</p>
+                    </div>
+                    {step.credits > 0 && (
+                      <span className="text-xs text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded-md">{step.credits}cr</span>
+                    )}
                   </div>
+                  {idx < PIPELINE_STEPS.length - 1 && (
+                    <ChevronRight className="w-4 h-4 text-slate-300 flex-shrink-0" />
+                  )}
                 </div>
               );
             })}
@@ -415,116 +376,168 @@ export default function CampaignDetailPage() {
 
           {/* Error */}
           {pipelineError && (
-            <div className="mt-4 flex items-center gap-2 px-4 py-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
+            <div className="mt-4 flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
               <AlertCircle className="w-4 h-4 flex-shrink-0" />
               {pipelineError}
-            </div>
-          )}
-
-          {/* Send all button (appears after generate step) */}
-          {(stepResults.generate || (stats?.draftMessages ?? 0) > 0) && !running && (
-            <div className="mt-6 pt-6 border-t border-slate-100">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-semibold text-slate-900">{stats?.draftMessages ?? 0} message(s) en brouillon</p>
-                  <p className="text-sm text-slate-500">Vérifiez les messages ci-dessous, puis envoyez-les.</p>
-                </div>
-                <button
-                  onClick={sendAll}
-                  disabled={sending || (stats?.draftMessages ?? 0) === 0}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {sending ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Envoi en cours...
-                    </>
-                  ) : (
-                    <>
-                      <Send className="w-4 h-4" />
-                      Envoyer tout ({stats?.draftMessages ?? 0})
-                    </>
-                  )}
-                </button>
-              </div>
             </div>
           )}
         </div>
 
         {/* Stats grid */}
-        {stats && (
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-8">
-            <div className="bg-white rounded-xl border border-slate-100 p-4">
-              <div className="text-xs text-slate-500 mb-1">Total prospects</div>
-              <div className="text-2xl font-bold">{stats.totalProspects}</div>
-            </div>
-            <div className="bg-white rounded-xl border border-slate-100 p-4">
-              <div className="text-xs text-slate-500 mb-1 flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-red-400" /> Hot (≥70)
+        {stats && stats.totalProspects > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
+            <div className="rounded-xl bg-white border border-slate-100 p-4">
+              <div className="flex items-center gap-2 text-slate-400 mb-1">
+                <Users className="w-3.5 h-3.5" />
+                <span className="text-xs font-medium">Prospects</span>
               </div>
-              <div className="text-2xl font-bold text-red-500">{stats.hot}</div>
+              <p className="text-2xl font-bold">{stats.totalProspects}</p>
             </div>
-            <div className="bg-white rounded-xl border border-slate-100 p-4">
-              <div className="text-xs text-slate-500 mb-1 flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-amber-400" /> Warm (40-69)
+            <div className="rounded-xl bg-white border border-slate-100 p-4">
+              <div className="flex items-center gap-2 text-slate-400 mb-1">
+                <Flame className="w-3.5 h-3.5" />
+                <span className="text-xs font-medium">Hot leads</span>
               </div>
-              <div className="text-2xl font-bold text-amber-500">{stats.warm}</div>
+              <p className="text-2xl font-bold text-emerald-600">{stats.hot}</p>
             </div>
-            <div className="bg-white rounded-xl border border-slate-100 p-4">
-              <div className="text-xs text-slate-500 mb-1">Contactés</div>
-              <div className="text-2xl font-bold text-purple-500">{stats.contacted}</div>
+            <div className="rounded-xl bg-white border border-slate-100 p-4">
+              <div className="flex items-center gap-2 text-slate-400 mb-1">
+                <Mail className="w-3.5 h-3.5" />
+                <span className="text-xs font-medium">Brouillons</span>
+              </div>
+              <p className="text-2xl font-bold">{stats.draftMessages}</p>
             </div>
-            <div className="bg-white rounded-xl border border-slate-100 p-4">
-              <div className="text-xs text-slate-500 mb-1">Ont répondu</div>
-              <div className="text-2xl font-bold text-emerald-500">{stats.replied}</div>
+            <div className="rounded-xl bg-white border border-slate-100 p-4">
+              <div className="flex items-center gap-2 text-slate-400 mb-1">
+                <Send className="w-3.5 h-3.5" />
+                <span className="text-xs font-medium">Envoyés</span>
+              </div>
+              <p className="text-2xl font-bold text-brand-600">{stats.sentMessages}</p>
             </div>
           </div>
         )}
 
-        {/* Two columns: Prospects + Messages */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Prospects list */}
-          <div className="bg-white rounded-2xl border border-slate-100 p-6">
+        {/* Tabs */}
+        <div className="flex items-center gap-1 mb-6 border-b border-slate-100">
+          <button
+            onClick={() => setActiveTab("prospects")}
+            className={`px-4 py-2.5 text-sm font-semibold transition relative ${
+              activeTab === "prospects" ? "text-slate-900" : "text-slate-400 hover:text-slate-600"
+            }`}
+          >
+            <span className="inline-flex items-center gap-2">
+              <Users className="w-4 h-4" />
+              Prospects
+              {stats && stats.totalProspects > 0 && (
+                <span className={`text-xs px-1.5 py-0.5 rounded-md ${activeTab === "prospects" ? "bg-brand-100 text-brand-700" : "bg-slate-100 text-slate-500"}`}>
+                  {stats.totalProspects}
+                </span>
+              )}
+            </span>
+            {activeTab === "prospects" && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-500 rounded-full" />}
+          </button>
+          <button
+            onClick={() => setActiveTab("emails")}
+            className={`px-4 py-2.5 text-sm font-semibold transition relative ${
+              activeTab === "emails" ? "text-slate-900" : "text-slate-400 hover:text-slate-600"
+            }`}
+          >
+            <span className="inline-flex items-center gap-2">
+              <Mail className="w-4 h-4" />
+              Emails
+              {stats && stats.draftMessages + stats.sentMessages > 0 && (
+                <span className={`text-xs px-1.5 py-0.5 rounded-md ${activeTab === "emails" ? "bg-brand-100 text-brand-700" : "bg-slate-100 text-slate-500"}`}>
+                  {stats.draftMessages + stats.sentMessages}
+                </span>
+              )}
+            </span>
+            {activeTab === "emails" && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-500 rounded-full" />}
+          </button>
+        </div>
+
+        {/* Prospects tab */}
+        {activeTab === "prospects" && (
+          <div>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold flex items-center gap-2">
-                <Users className="w-4 h-4 text-slate-400" />
-                Prospects ({prospects.length})
-              </h3>
+              <p className="text-sm text-slate-400">
+                {prospects.length} prospect{prospects.length > 1 ? "s" : ""} trouvé{prospects.length > 1 ? "s" : ""}
+              </p>
+              <button
+                onClick={() => setShowManual(true)}
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-600 hover:text-brand-700 transition"
+              >
+                <Plus className="w-4 h-4" />
+                Ajouter manuellement
+              </button>
             </div>
 
             {prospects.length === 0 ? (
-              <p className="text-sm text-slate-400 py-8 text-center">
-                Aucun prospect. Lancez le pipeline ou ajoutez-en manuellement.
-              </p>
+              <div className="text-center py-16 rounded-2xl bg-white border border-dashed border-slate-200">
+                <Users className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                <p className="text-slate-400 text-sm">Aucun prospect pour le moment</p>
+                <p className="text-slate-400 text-xs mt-1">Lancez le pipeline ou ajoutez un prospect manuellement</p>
+              </div>
             ) : (
-              <div className="space-y-2 max-h-96 overflow-y-auto">
+              <div className="space-y-2">
                 {prospects.map((p) => {
-                  const score = p.score ?? 0;
-                  const scoreColor = score >= 70 ? "text-red-500 bg-red-50" : score >= 40 ? "text-amber-600 bg-amber-50" : "text-slate-400 bg-slate-50";
+                  const d = p.data as any;
                   return (
-                    <div key={p.id} className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-50 transition group">
-                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-sm font-bold ${scoreColor}`}>
-                        {score}
+                    <div
+                      key={p.id}
+                      className="flex items-center gap-3 p-4 rounded-xl bg-white border border-slate-100 hover:border-slate-200 transition group"
+                    >
+                      {/* Avatar */}
+                      <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-500 font-semibold text-sm flex-shrink-0">
+                        {p.name?.charAt(0)?.toUpperCase() || "?"}
                       </div>
+
+                      {/* Info */}
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium text-sm truncate">{p.name}</p>
-                        <p className="text-xs text-slate-400 truncate">
-                          {p.company || "—"} {p.data?.role ? `· ${p.data.role}` : ""}
-                        </p>
+                        <div className="flex items-center gap-2">
+                          <p className="font-semibold text-sm text-slate-900 truncate">{p.name}</p>
+                          {d?.role && (
+                            <span className="text-xs text-slate-400 hidden sm:inline">· {d.role}</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-slate-400">
+                          {p.company && (
+                            <span className="inline-flex items-center gap-1">
+                              <Building2 className="w-3 h-3" />
+                              {p.company}
+                            </span>
+                          )}
+                          {p.email && (
+                            <span className="inline-flex items-center gap-1 truncate">
+                              <Mail className="w-3 h-3 flex-shrink-0" />
+                              <span className="truncate">{p.email}</span>
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+
+                      {/* Score */}
+                      {p.score > 0 && (
+                        <div className={`px-2 py-1 rounded-lg text-xs font-bold ${scoreColor(p.score)} flex-shrink-0 hidden sm:block`}>
+                          {p.score}
+                        </div>
+                      )}
+
+                      {/* Status */}
+                      <span className={`text-xs px-2 py-1 rounded-md font-medium flex-shrink-0 ${
                         p.status === "qualified" ? "bg-emerald-50 text-emerald-600" :
-                        p.status === "contacted" ? "bg-purple-50 text-purple-600" :
-                        p.status === "replied" ? "bg-blue-50 text-blue-600" :
+                        p.status === "contacted" ? "bg-brand-50 text-brand-600" :
+                        p.status === "replied" ? "bg-purple-50 text-purple-600" :
                         "bg-slate-50 text-slate-400"
                       }`}>
-                        {p.status}
+                        {p.status === "new" ? "Nouveau" : p.status === "qualified" ? "Qualifié" : p.status === "contacted" ? "Contacté" : p.status === "replied" ? "Répondu" : p.status}
                       </span>
+
+                      {/* Delete */}
                       <button
                         onClick={() => deleteProspect(p.id)}
-                        className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 transition"
+                        className="text-slate-200 hover:text-red-500 transition opacity-0 group-hover:opacity-100 flex-shrink-0"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   );
@@ -532,48 +545,88 @@ export default function CampaignDetailPage() {
               </div>
             )}
           </div>
+        )}
 
-          {/* Messages list */}
-          <div className="bg-white rounded-2xl border border-slate-100 p-6">
+        {/* Emails tab */}
+        {activeTab === "emails" && (
+          <div>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold flex items-center gap-2">
-                <Mail className="w-4 h-4 text-slate-400" />
-                Messages ({messages.length})
-              </h3>
+              <p className="text-sm text-slate-400">
+                {messages.length} email{messages.length > 1 ? "s" : ""}
+                {stats && stats.draftMessages > 0 && ` · ${stats.draftMessages} en brouillon`}
+                {stats && stats.sentMessages > 0 && ` · ${stats.sentMessages} envoyé${stats.sentMessages > 1 ? "s" : ""}`}
+              </p>
+              {stats && stats.draftMessages > 0 && (
+                <button
+                  onClick={sendAll}
+                  disabled={sending}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-brand-500 text-white font-semibold text-sm hover:bg-brand-600 transition-all shadow-sm active:scale-[0.98] disabled:opacity-50"
+                >
+                  {sending ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Envoi…
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-4 h-4" />
+                      Tout envoyer ({stats.draftMessages})
+                    </>
+                  )}
+                </button>
+              )}
             </div>
 
             {messages.length === 0 ? (
-              <p className="text-sm text-slate-400 py-8 text-center">
-                Aucun message. Lancez le pipeline pour générer des emails.
-              </p>
+              <div className="text-center py-16 rounded-2xl bg-white border border-dashed border-slate-200">
+                <Mail className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                <p className="text-slate-400 text-sm">Aucun email généré</p>
+                <p className="text-slate-400 text-xs mt-1">Lancez le pipeline pour générer des emails personnalisés</p>
+              </div>
             ) : (
-              <div className="space-y-2 max-h-96 overflow-y-auto">
+              <div className="space-y-3">
                 {messages.map((msg) => {
                   const prospect = prospects.find((p) => p.id === msg.prospectId);
+                  const isExpanded = expandedEmail === msg.id;
                   return (
-                    <div key={msg.id} className="p-3 rounded-lg border border-slate-100 hover:border-slate-200 transition">
-                      <div className="flex items-center justify-between mb-1">
-                        <p className="text-sm font-medium truncate">{msg.subject || "(sans sujet)"}</p>
-                        <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ml-2 ${
-                          msg.status === "sent" ? "bg-emerald-50 text-emerald-600" :
-                          msg.status === "bounced" ? "bg-red-50 text-red-500" :
-                          "bg-amber-50 text-amber-600"
-                        }`}>
-                          {msg.status === "sent" ? "Envoyé" : msg.status === "bounced" ? "Échec" : "Brouillon"}
-                        </span>
+                    <div key={msg.id} className="rounded-xl bg-white border border-slate-100 overflow-hidden">
+                      {/* Email header */}
+                      <div
+                        className="flex items-center gap-3 p-4 cursor-pointer hover:bg-slate-50/50 transition"
+                        onClick={() => setExpandedEmail(isExpanded ? null : msg.id)}
+                      >
+                        <div className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center text-slate-500 font-semibold text-sm flex-shrink-0">
+                          {prospect?.name?.charAt(0)?.toUpperCase() || "?"}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="font-semibold text-sm text-slate-900 truncate">{prospect?.name || "Inconnu"}</p>
+                            <span className={`text-xs px-2 py-0.5 rounded-md font-medium ring-1 ${msgStatusBadge(msg.status)} flex-shrink-0`}>
+                              {msgStatusLabel(msg.status)}
+                            </span>
+                          </div>
+                          <p className="text-sm text-slate-500 truncate mt-0.5">{msg.subject}</p>
+                        </div>
+                        <ChevronRight className={`w-4 h-4 text-slate-300 transition flex-shrink-0 ${isExpanded ? "rotate-90" : ""}`} />
                       </div>
-                      <p className="text-xs text-slate-400 mb-2">
-                        À: {prospect?.name || "—"} {prospect?.email ? `(${prospect.email})` : ""}
-                      </p>
-                      <p className="text-xs text-slate-500 line-clamp-2 mb-2">{msg.content}</p>
-                      {msg.status === "draft" && (
-                        <button
-                          onClick={() => sendMessage(msg.id)}
-                          className="text-xs text-brand-600 font-semibold hover:underline inline-flex items-center gap-1"
-                        >
-                          <Send className="w-3 h-3" />
-                          Envoyer
-                        </button>
+
+                      {/* Email body (expanded) */}
+                      {isExpanded && (
+                        <div className="px-4 pb-4 border-t border-slate-50 pt-3">
+                          <p className="text-xs text-slate-400 mb-2">À: {prospect?.email || "Pas d'email"}</p>
+                          <div className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed bg-slate-50 rounded-xl p-4">
+                            {msg.content}
+                          </div>
+                          {msg.status === "draft" && prospect?.email && (
+                            <button
+                              onClick={() => sendMessage(msg.id)}
+                              className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-brand-500 text-white font-medium text-sm hover:bg-brand-600 transition"
+                            >
+                              <Send className="w-3.5 h-3.5" />
+                              Envoyer cet email
+                            </button>
+                          )}
+                        </div>
                       )}
                     </div>
                   );
@@ -581,41 +634,55 @@ export default function CampaignDetailPage() {
               </div>
             )}
           </div>
-        </div>
+        )}
 
         {/* Manual prospect modal */}
         {showManual && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setShowManual(false)}>
-            <div className="bg-white rounded-3xl p-8 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
-              <h3 className="text-lg font-bold mb-4">Ajouter un prospect</h3>
-              <form onSubmit={addManualProspect} className="space-y-3">
-                <input
-                  type="text"
-                  value={manualProspect.name}
-                  onChange={(e) => setManualProspect({ ...manualProspect, name: e.target.value })}
-                  required
-                  placeholder="Nom complet"
-                  className="w-full px-4 py-2.5 rounded-lg border border-slate-200 focus:border-brand-400 focus:ring-2 focus:ring-brand-100 outline-none transition"
-                />
-                <input
-                  type="email"
-                  value={manualProspect.email}
-                  onChange={(e) => setManualProspect({ ...manualProspect, email: e.target.value })}
-                  placeholder="Email"
-                  className="w-full px-4 py-2.5 rounded-lg border border-slate-200 focus:border-brand-400 focus:ring-2 focus:ring-brand-100 outline-none transition"
-                />
-                <input
-                  type="text"
-                  value={manualProspect.company}
-                  onChange={(e) => setManualProspect({ ...manualProspect, company: e.target.value })}
-                  placeholder="Entreprise"
-                  className="w-full px-4 py-2.5 rounded-lg border border-slate-200 focus:border-brand-400 focus:ring-2 focus:ring-brand-100 outline-none transition"
-                />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm" onClick={() => setShowManual(false)}>
+            <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-2xl border border-slate-100" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-lg font-bold">Ajouter un prospect</h2>
+                <button onClick={() => setShowManual(false)} className="text-slate-400 hover:text-slate-900 p-1 -m-1 rounded-lg hover:bg-slate-50 transition">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <form onSubmit={addManualProspect} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Nom complet</label>
+                  <input
+                    type="text"
+                    value={manualProspect.name}
+                    onChange={(e) => setManualProspect({ ...manualProspect, name: e.target.value })}
+                    required
+                    placeholder="Ex: Jean Dupont"
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-brand-400 focus:ring-2 focus:ring-brand-100 outline-none transition text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Email</label>
+                  <input
+                    type="email"
+                    value={manualProspect.email}
+                    onChange={(e) => setManualProspect({ ...manualProspect, email: e.target.value })}
+                    placeholder="Ex: jean@entreprise.com"
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-brand-400 focus:ring-2 focus:ring-brand-100 outline-none transition text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Entreprise</label>
+                  <input
+                    type="text"
+                    value={manualProspect.company}
+                    onChange={(e) => setManualProspect({ ...manualProspect, company: e.target.value })}
+                    placeholder="Ex: Tech Corp"
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-brand-400 focus:ring-2 focus:ring-brand-100 outline-none transition text-sm"
+                  />
+                </div>
                 <button
                   type="submit"
-                  className="w-full py-2.5 rounded-lg bg-gradient-to-r from-brand-500 to-purple-600 text-white font-semibold"
+                  className="w-full py-3 rounded-xl bg-brand-500 text-white font-semibold text-sm hover:bg-brand-600 transition-all shadow-sm active:scale-[0.98]"
                 >
-                  Ajouter
+                  Ajouter le prospect
                 </button>
               </form>
             </div>
